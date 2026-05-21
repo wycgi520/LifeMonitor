@@ -17,10 +17,10 @@ const FULL_WINDOW = {
 };
 
 const MINI_WINDOW = {
-  width: 360,
-  height: 220,
-  minWidth: 320,
-  minHeight: 200,
+  width: 320,
+  height: 92,
+  minWidth: 280,
+  minHeight: 86,
 };
 
 const MINI_WINDOW_MARGIN = 16;

@@ -486,28 +486,21 @@ function MiniReminderWindow({
 
   return (
     <main className={`app-shell mini-shell ${statusTone}`}>
-      <div className="mini-drag-region" onMouseDown={handleStartDrag} title="拖动窗口" aria-hidden="true" />
+      <div className="mini-drag-region" onMouseDown={handleStartDrag} aria-hidden="true" />
 
       {monitor.error && <p className="mini-error">{monitor.error}</p>}
 
-      <section className="mini-status-card" aria-live="polite">
-        <div className="mini-status-row">
-          <span className={`mini-state ${statusTone}`}>
-            <BellRing aria-hidden="true" />
-            {stateLabels[monitor.state]}
-          </span>
-          <div className="mini-card-tools">
-            <span className="mini-caption">{timerLabel}</span>
-            <button type="button" className="icon-only mini-expand" onClick={onExpand} title="展开完整界面">
-              <Maximize2 aria-hidden="true" />
-            </button>
-          </div>
-        </div>
+      <section className="mini-status-line" aria-live="polite">
+        <span className={`mini-state ${statusTone}`}>{stateLabels[monitor.state]}</span>
+        <span className="mini-caption">{timerLabel}</span>
         <strong className="mini-timer">{timerValue}</strong>
         <span className="mini-task-name">{monitor.snapshot.taskName ?? UNMARKED_TASK}</span>
+        <button type="button" className="icon-only mini-expand" onClick={onExpand} title="展开完整界面">
+          <Maximize2 aria-hidden="true" />
+        </button>
       </section>
 
-      <form className="mini-task-form" onSubmit={(event) => void onTaskSubmit(event)}>
+      <form className="mini-control-row" onSubmit={(event) => void onTaskSubmit(event)}>
         <input
           aria-label="当前任务"
           value={monitor.taskDraft}
@@ -515,22 +508,36 @@ function MiniReminderWindow({
           onBlur={() => void onTaskCommit()}
           onChange={(event) => monitor.setTaskDraft(event.target.value)}
         />
+        <div className="mini-actions" aria-label="快捷操作">
+          <button
+            type="button"
+            className="icon-only mini-action-button primary"
+            onClick={() => void monitor.startBusy()}
+            title="忙碌"
+            aria-label="忙碌"
+          >
+            <BriefcaseBusiness aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="icon-only mini-action-button rest"
+            onClick={() => void monitor.startRest()}
+            title="休息"
+            aria-label="休息"
+          >
+            <Coffee aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="icon-only mini-action-button"
+            onClick={pauseAction.onClick}
+            title={pauseAction.title}
+            aria-label={pauseAction.label}
+          >
+            {pauseAction.icon}
+          </button>
+        </div>
       </form>
-
-      <div className="mini-actions" aria-label="快捷操作">
-        <button type="button" className="icon-button primary" onClick={() => void monitor.startBusy()} title="忙碌">
-          <BriefcaseBusiness aria-hidden="true" />
-          <span>忙碌</span>
-        </button>
-        <button type="button" className="icon-button rest" onClick={() => void monitor.startRest()} title="休息">
-          <Coffee aria-hidden="true" />
-          <span>休息</span>
-        </button>
-        <button type="button" className="icon-button" onClick={pauseAction.onClick} title={pauseAction.title}>
-          {pauseAction.icon}
-          <span>{pauseAction.label}</span>
-        </button>
-      </div>
       <button type="button" className="mini-resize-handle" onMouseDown={handleStartResize} title="调整窗口大小">
         <Grip aria-hidden="true" />
         <span className="sr-only">调整窗口大小</span>
