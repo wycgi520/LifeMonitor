@@ -17,7 +17,7 @@ import {
 } from "@lifemonitor/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { showReminderNotification } from "./notifications";
-import { syncPlatformSettings } from "./platform";
+import { registerWindowCloseBehavior, syncPlatformSettings } from "./platform";
 import { createRepository, type LifeRepository } from "./repository";
 
 interface PausedContext {
@@ -111,6 +111,32 @@ export function useLifeMonitor(): LifeMonitorController {
 
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!repository) return;
+
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    const saveCloseBehavior = async (nextSettings: LifeSettings) => {
+      await repository.saveSettings(nextSettings);
+      setSettings(nextSettings);
+    };
+
+    void registerWindowCloseBehavior(settings, saveCloseBehavior).then((nextUnlisten) => {
+      if (disposed) {
+        nextUnlisten();
+        return;
+      }
+
+      unlisten = nextUnlisten;
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [repository, settings]);
 
   const stats = useMemo(() => {
     const { startIso, endIso } = getLocalDayRange();

@@ -21,6 +21,7 @@ import {
   UNMARKED_TASK,
   canMergeSegments,
   formatDuration,
+  type CloseWindowBehavior,
   type LifeSettings,
   type TimelineSegment,
   type TrackableState,
@@ -339,6 +340,22 @@ function App() {
             />
             <Settings2 aria-hidden="true" />
             开机自启
+          </label>
+          <label className="close-behavior-editor">
+            关闭窗口
+            <select
+              value={settingsDraft.closeWindowBehavior}
+              onChange={(event) =>
+                setSettingsDraft((current) => ({
+                  ...current,
+                  closeWindowBehavior: event.target.value as CloseWindowBehavior,
+                }))
+              }
+            >
+              <option value="ask">每次询问</option>
+              <option value="minimize-to-tray">缩小到托盘</option>
+              <option value="quit">直接退出</option>
+            </select>
           </label>
           <label className="quick-task-editor">
             快捷任务

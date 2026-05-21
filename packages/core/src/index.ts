@@ -4,12 +4,15 @@ export type TrackableState = "busy" | "rest";
 
 export type ReminderPolicy = "carry-current-state";
 
+export type CloseWindowBehavior = "ask" | "minimize-to-tray" | "quit";
+
 export interface LifeSettings {
   busyMinutes: number;
   restMinutes: number;
   soundEnabled: boolean;
   alwaysOnTop: boolean;
   autostart: boolean;
+  closeWindowBehavior: CloseWindowBehavior;
   quickTasks: string[];
   reminderPolicy: ReminderPolicy;
 }
@@ -60,6 +63,7 @@ export const DEFAULT_SETTINGS: LifeSettings = {
   soundEnabled: true,
   alwaysOnTop: true,
   autostart: false,
+  closeWindowBehavior: "ask",
   quickTasks: ["写代码", "看文档", "开会", "学习英语", "玩游戏"],
   reminderPolicy: "carry-current-state",
 };

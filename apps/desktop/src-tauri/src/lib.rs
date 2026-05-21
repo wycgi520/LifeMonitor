@@ -10,6 +10,7 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![quit_app])
         .setup(|app| {
             #[cfg(desktop)]
             {
@@ -26,6 +27,11 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running LifeMonitor");
+}
+
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
 }
 
 #[cfg(desktop)]
