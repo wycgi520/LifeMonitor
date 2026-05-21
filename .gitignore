@@ -1,0 +1,44 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+coverage
+*.local
+
+# Tauri / Rust build output
+target
+src-tauri/target
+apps/**/src-tauri/target
+apps/**/src-tauri/gen/schemas
+
+# Generated Tauri icon variants that can be recreated with `tauri icon`
+apps/**/src-tauri/icons/android
+apps/**/src-tauri/icons/ios
+apps/**/src-tauri/icons/Square*.png
+apps/**/src-tauri/icons/StoreLogo.png
+apps/**/src-tauri/icons/64x64.png
+
+# Local runtime artifacts
+*.sqlite
+*.sqlite3
+*.db
+lifemonitor-preview.png
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

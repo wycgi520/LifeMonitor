@@ -1,0 +1,20 @@
+{
+  "name": "lifemonitor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @lifemonitor/desktop",
+    "desktop": "npm run tauri:dev -w @lifemonitor/desktop",
+    "build": "npm run build -w @lifemonitor/core && npm run build -w @lifemonitor/desktop",
+    "test": "npm run test -w @lifemonitor/core",
+    "lint": "npm run lint -w @lifemonitor/desktop"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.16"
+  }
+}
