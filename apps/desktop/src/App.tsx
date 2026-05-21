@@ -31,7 +31,13 @@ import {
 } from "@lifemonitor/core";
 import "./App.css";
 import { useLifeMonitor } from "./services/useLifeMonitor";
-import { startWindowDrag, startWindowResize, syncWindowMode, type AppWindowMode } from "./services/platform";
+import {
+  registerMiniWindowPositionTracking,
+  startWindowDrag,
+  startWindowResize,
+  syncWindowMode,
+  type AppWindowMode,
+} from "./services/platform";
 
 const WINDOW_MODE_STORAGE_KEY = "lifemonitor:window-mode:v1";
 
@@ -432,6 +438,26 @@ function MiniReminderWindow({
 }) {
   const timerLabel = getTimerLabel(monitor);
   const timerValue = getTimerValue(monitor);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+
+    void registerMiniWindowPositionTracking().then((nextUnlisten) => {
+      if (disposed) {
+        nextUnlisten();
+        return;
+      }
+
+      unlisten = nextUnlisten;
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   const handleStartDrag = (event: MouseEvent<HTMLElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
