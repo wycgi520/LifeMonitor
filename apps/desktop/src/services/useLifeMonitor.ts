@@ -143,16 +143,34 @@ export function useLifeMonitor(): LifeMonitorController {
     return calculateTodayStats(segments, startIso, endIso, nowIso);
   }, [nowIso, segments]);
 
+  const snapshotSegment = useMemo(() => {
+    if (!activeSegment) return null;
+
+    const runStartedAt = [...segments, activeSegment]
+      .filter((segment) => segment.stateRunId === activeSegment.stateRunId)
+      .reduce(
+        (earliest, segment) => (segment.startedAt < earliest ? segment.startedAt : earliest),
+        activeSegment.startedAt,
+      );
+
+    return runStartedAt === activeSegment.startedAt
+      ? activeSegment
+      : {
+          ...activeSegment,
+          startedAt: runStartedAt,
+        };
+  }, [activeSegment, segments]);
+
   const snapshot = useMemo(
     () =>
       deriveTimerSnapshot({
         state,
-        activeSegment,
+        activeSegment: snapshotSegment,
         settings,
         nowIso,
         extensionMinutes: activeSegment ? extensionMinutesByRun[activeSegment.stateRunId] ?? 0 : 0,
       }),
-    [activeSegment, extensionMinutesByRun, nowIso, settings, state],
+    [activeSegment, extensionMinutesByRun, nowIso, settings, snapshotSegment, state],
   );
 
   const reminderVisible = Boolean(
@@ -195,6 +213,7 @@ export function useLifeMonitor(): LifeMonitorController {
     async (nextState: TrackableState, taskName?: string | null) => {
       const now = new Date().toISOString();
       const normalizedTask = normalizeTaskName(taskName ?? taskDraft);
+      const isContinuingState = activeSegment?.state === nextState;
 
       await persistAndRefresh(async (repo) => {
         await closeCurrent(repo, now);
@@ -203,6 +222,8 @@ export function useLifeMonitor(): LifeMonitorController {
           taskName: normalizedTask,
           nowIso: now,
           settings,
+          stateRunId: isContinuingState ? activeSegment.stateRunId : undefined,
+          plannedEndAt: isContinuingState ? activeSegment.plannedEndAt : undefined,
         });
         await repo.insertSegment(nextSegment);
         setActiveSegment(nextSegment);
@@ -211,7 +232,7 @@ export function useLifeMonitor(): LifeMonitorController {
         setPausedContext(null);
       });
     },
-    [closeCurrent, persistAndRefresh, settings, taskDraft],
+    [activeSegment, closeCurrent, persistAndRefresh, settings, taskDraft],
   );
 
   const startBusy = useCallback(

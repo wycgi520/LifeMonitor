@@ -74,15 +74,6 @@ function App() {
 
   const statusTone = monitor.snapshot.isDue ? "is-due" : monitor.state;
 
-  const commitTask = async () => {
-    await monitor.changeTask(monitor.taskDraft);
-  };
-
-  const submitTask = async (event: FormEvent) => {
-    event.preventDefault();
-    await commitTask();
-  };
-
   const saveSettings = async (event: FormEvent) => {
     event.preventDefault();
     await monitor.saveSettings({
@@ -108,8 +99,6 @@ function App() {
         monitor={monitor}
         statusTone={statusTone}
         onExpand={() => setWindowMode("full")}
-        onTaskSubmit={submitTask}
-        onTaskCommit={commitTask}
       />
     );
   }
@@ -204,25 +193,21 @@ function App() {
             <Metric label="当前任务" value={monitor.snapshot.taskName ?? UNMARKED_TASK} />
           </div>
 
-          <form className="task-form" onSubmit={(event) => void submitTask(event)}>
-            <label htmlFor="task-input">当前任务</label>
+          <div className="task-form">
+            <label htmlFor="task-input">活动内容</label>
             <div className="task-input-row">
               <input
                 id="task-input"
                 value={monitor.taskDraft}
-                placeholder="写代码 / 看文档 / 开会"
+                placeholder="工作 / 散步 / 喝水"
                 onChange={(event) => monitor.setTaskDraft(event.target.value)}
               />
-              <button type="submit" className="icon-button" title="更换任务">
-                <RefreshCw aria-hidden="true" />
-                <span>更换任务</span>
-              </button>
             </div>
-          </form>
+          </div>
 
           <div className="quick-tasks">
             {monitor.settings.quickTasks.map((task) => (
-              <button key={task} type="button" onClick={() => void monitor.changeTask(task)}>
+              <button key={task} type="button" onClick={() => monitor.setTaskDraft(task)}>
                 {task}
               </button>
             ))}
@@ -427,14 +412,10 @@ function MiniReminderWindow({
   monitor,
   statusTone,
   onExpand,
-  onTaskSubmit,
-  onTaskCommit,
 }: {
   monitor: ReturnType<typeof useLifeMonitor>;
   statusTone: string;
   onExpand: () => void;
-  onTaskSubmit: (event: FormEvent) => Promise<void>;
-  onTaskCommit: () => Promise<void>;
 }) {
   const timerLabel = getTimerLabel(monitor);
   const timerValue = getTimerValue(monitor);
@@ -500,12 +481,11 @@ function MiniReminderWindow({
         </button>
       </section>
 
-      <form className="mini-control-row" onSubmit={(event) => void onTaskSubmit(event)}>
+      <div className="mini-control-row">
         <input
-          aria-label="当前任务"
+          aria-label="活动内容"
           value={monitor.taskDraft}
-          placeholder="当前任务"
-          onBlur={() => void onTaskCommit()}
+          placeholder="活动内容"
           onChange={(event) => monitor.setTaskDraft(event.target.value)}
         />
         <div className="mini-actions" aria-label="快捷操作">
@@ -537,7 +517,7 @@ function MiniReminderWindow({
             {pauseAction.icon}
           </button>
         </div>
-      </form>
+      </div>
       <button type="button" className="mini-resize-handle" onMouseDown={handleStartResize} title="调整窗口大小">
         <Grip aria-hidden="true" />
         <span className="sr-only">调整窗口大小</span>
