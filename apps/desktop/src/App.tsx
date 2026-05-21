@@ -4,7 +4,10 @@ import {
   Check,
   Clock3,
   Coffee,
+  Grip,
+  Maximize2,
   Merge,
+  Minimize2,
   Pause,
   Pin,
   Play,
@@ -15,7 +18,7 @@ import {
   Trash2,
   Volume2,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type MouseEvent } from "react";
 import {
   DEFAULT_SETTINGS,
   UNMARKED_TASK,
@@ -28,6 +31,9 @@ import {
 } from "@lifemonitor/core";
 import "./App.css";
 import { useLifeMonitor } from "./services/useLifeMonitor";
+import { startWindowDrag, startWindowResize, syncWindowMode, type AppWindowMode } from "./services/platform";
+
+const WINDOW_MODE_STORAGE_KEY = "lifemonitor:window-mode:v1";
 
 const stateLabels = {
   idle: "空闲",
@@ -44,10 +50,16 @@ const trackableStateLabels: Record<TrackableState, string> = {
 function App() {
   const monitor = useLifeMonitor();
   const [settingsDraft, setSettingsDraft] = useState<LifeSettings>(DEFAULT_SETTINGS);
+  const [windowMode, setWindowMode] = useState<AppWindowMode>(() => readWindowMode());
 
   useEffect(() => {
     setSettingsDraft(monitor.settings);
   }, [monitor.settings]);
+
+  useEffect(() => {
+    window.localStorage.setItem(WINDOW_MODE_STORAGE_KEY, windowMode);
+    void syncWindowMode(windowMode);
+  }, [windowMode]);
 
   const orderedSegments = useMemo(
     () => [...monitor.segments].sort((left, right) => left.startedAt.localeCompare(right.startedAt)),
@@ -56,9 +68,13 @@ function App() {
 
   const statusTone = monitor.snapshot.isDue ? "is-due" : monitor.state;
 
+  const commitTask = async () => {
+    await monitor.changeTask(monitor.taskDraft);
+  };
+
   const submitTask = async (event: FormEvent) => {
     event.preventDefault();
-    await monitor.changeTask(monitor.taskDraft);
+    await commitTask();
   };
 
   const saveSettings = async (event: FormEvent) => {
@@ -77,6 +93,18 @@ function App() {
         <Clock3 aria-hidden="true" />
         <p>正在加载 LifeMonitor</p>
       </main>
+    );
+  }
+
+  if (windowMode === "mini") {
+    return (
+      <MiniReminderWindow
+        monitor={monitor}
+        statusTone={statusTone}
+        onExpand={() => setWindowMode("full")}
+        onTaskSubmit={submitTask}
+        onTaskCommit={commitTask}
+      />
     );
   }
 
@@ -130,9 +158,19 @@ function App() {
           <p className="eyebrow">LifeMonitor</p>
           <h1>今天在做什么</h1>
         </div>
-        <div className={`status-pill ${statusTone}`}>
-          <BellRing aria-hidden="true" />
-          <span>{stateLabels[monitor.state]}</span>
+        <div className="topbar-actions">
+          <button
+            type="button"
+            className="icon-only"
+            onClick={() => setWindowMode("mini")}
+            title="切换到迷你提醒窗"
+          >
+            <Minimize2 aria-hidden="true" />
+          </button>
+          <div className={`status-pill ${statusTone}`}>
+            <BellRing aria-hidden="true" />
+            <span>{stateLabels[monitor.state]}</span>
+          </div>
         </div>
       </header>
 
@@ -379,6 +417,102 @@ function App() {
   );
 }
 
+function MiniReminderWindow({
+  monitor,
+  statusTone,
+  onExpand,
+  onTaskSubmit,
+  onTaskCommit,
+}: {
+  monitor: ReturnType<typeof useLifeMonitor>;
+  statusTone: string;
+  onExpand: () => void;
+  onTaskSubmit: (event: FormEvent) => Promise<void>;
+  onTaskCommit: () => Promise<void>;
+}) {
+  const timerLabel = getTimerLabel(monitor);
+  const timerValue = getTimerValue(monitor);
+  const handleStartDrag = (event: MouseEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    void startWindowDrag();
+  };
+  const handleStartResize = (event: MouseEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void startWindowResize();
+  };
+  const pauseAction =
+    monitor.state === "paused"
+      ? {
+          label: "继续",
+          title: "继续计时",
+          icon: <Play aria-hidden="true" />,
+          onClick: () => void monitor.resume(),
+        }
+      : {
+          label: "暂停",
+          title: "暂停计时",
+          icon: <Pause aria-hidden="true" />,
+          onClick: () => void monitor.pause(),
+        };
+
+  return (
+    <main className={`app-shell mini-shell ${statusTone}`}>
+      <div className="mini-drag-region" onMouseDown={handleStartDrag} title="拖动窗口" aria-hidden="true" />
+
+      {monitor.error && <p className="mini-error">{monitor.error}</p>}
+
+      <section className="mini-status-card" aria-live="polite">
+        <div className="mini-status-row">
+          <span className={`mini-state ${statusTone}`}>
+            <BellRing aria-hidden="true" />
+            {stateLabels[monitor.state]}
+          </span>
+          <div className="mini-card-tools">
+            <span className="mini-caption">{timerLabel}</span>
+            <button type="button" className="icon-only mini-expand" onClick={onExpand} title="展开完整界面">
+              <Maximize2 aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+        <strong className="mini-timer">{timerValue}</strong>
+        <span className="mini-task-name">{monitor.snapshot.taskName ?? UNMARKED_TASK}</span>
+      </section>
+
+      <form className="mini-task-form" onSubmit={(event) => void onTaskSubmit(event)}>
+        <input
+          aria-label="当前任务"
+          value={monitor.taskDraft}
+          placeholder="当前任务"
+          onBlur={() => void onTaskCommit()}
+          onChange={(event) => monitor.setTaskDraft(event.target.value)}
+        />
+      </form>
+
+      <div className="mini-actions" aria-label="快捷操作">
+        <button type="button" className="icon-button primary" onClick={() => void monitor.startBusy()} title="忙碌">
+          <BriefcaseBusiness aria-hidden="true" />
+          <span>忙碌</span>
+        </button>
+        <button type="button" className="icon-button rest" onClick={() => void monitor.startRest()} title="休息">
+          <Coffee aria-hidden="true" />
+          <span>休息</span>
+        </button>
+        <button type="button" className="icon-button" onClick={pauseAction.onClick} title={pauseAction.title}>
+          {pauseAction.icon}
+          <span>{pauseAction.label}</span>
+        </button>
+      </div>
+      <button type="button" className="mini-resize-handle" onMouseDown={handleStartResize} title="调整窗口大小">
+        <Grip aria-hidden="true" />
+        <span className="sr-only">调整窗口大小</span>
+      </button>
+    </main>
+  );
+}
+
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="metric">
@@ -528,6 +662,21 @@ function fromLocalInputValue(value: string): string {
 function clampMinutes(value: number, min: number, max: number): number {
   if (Number.isNaN(value)) return min;
   return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function getTimerLabel(monitor: ReturnType<typeof useLifeMonitor>): string {
+  if (monitor.state === "idle") return "未计时";
+  if (monitor.state === "paused") return "已暂停";
+  return monitor.snapshot.isDue ? "超时" : "剩余";
+}
+
+function getTimerValue(monitor: ReturnType<typeof useLifeMonitor>): string {
+  if (monitor.state === "idle" || monitor.state === "paused") return "0秒";
+  return formatDuration(monitor.snapshot.isDue ? monitor.snapshot.overtimeSeconds : monitor.snapshot.remainingSeconds);
+}
+
+function readWindowMode(): AppWindowMode {
+  return window.localStorage.getItem(WINDOW_MODE_STORAGE_KEY) === "mini" ? "mini" : "full";
 }
 
 export default App;

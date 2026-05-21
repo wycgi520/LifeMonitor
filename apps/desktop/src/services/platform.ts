@@ -1,11 +1,29 @@
 import type { LifeSettings } from "@lifemonitor/core";
+import type { LogicalSize as TauriLogicalSize } from "@tauri-apps/api/window";
 import { isTauriRuntime } from "./repository";
 
 type SaveSettings = (settings: LifeSettings) => Promise<void>;
+export type AppWindowMode = "full" | "mini";
 type TauriWindow = {
   destroy(): Promise<void>;
   hide(): Promise<void>;
 };
+
+const FULL_WINDOW = {
+  width: 1180,
+  height: 760,
+  minWidth: 960,
+  minHeight: 640,
+};
+
+const MINI_WINDOW = {
+  width: 360,
+  height: 220,
+  minWidth: 320,
+  minHeight: 200,
+};
+
+const MINI_WINDOW_MARGIN = 16;
 
 const CLOSE_WINDOW_PROMPT =
   "关闭窗口时缩小到系统托盘吗？\n\n确定：缩小到托盘并记住选择\n取消：直接退出并记住选择\n\n之后可在设置里改回每次询问。";
@@ -17,6 +35,73 @@ export async function syncPlatformSettings(settings: LifeSettings): Promise<void
     syncAlwaysOnTop(settings.alwaysOnTop),
     syncAutostart(settings.autostart),
   ]);
+}
+
+export async function syncWindowMode(mode: AppWindowMode): Promise<void> {
+  if (!isTauriRuntime()) return;
+
+  try {
+    const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
+    const appWindow = getCurrentWindow();
+
+    if (mode === "mini") {
+      const miniSize = new LogicalSize(MINI_WINDOW.width, MINI_WINDOW.height);
+
+      await appWindow.setDecorations(false);
+      await appWindow.setMinSize(new LogicalSize(MINI_WINDOW.minWidth, MINI_WINDOW.minHeight));
+      await appWindow.setMaxSize(null);
+      await appWindow.setResizable(true);
+      await appWindow.setSize(miniSize);
+      await positionMiniWindowAtTopRight(miniSize);
+      return;
+    }
+
+    await appWindow.setDecorations(true);
+    await appWindow.setMaxSize(null);
+    await appWindow.setResizable(true);
+    await appWindow.setMinSize(new LogicalSize(FULL_WINDOW.minWidth, FULL_WINDOW.minHeight));
+    await appWindow.setSize(new LogicalSize(FULL_WINDOW.width, FULL_WINDOW.height));
+    await appWindow.center();
+  } catch (error) {
+    console.warn("Failed to sync window mode.", error);
+  }
+}
+
+async function positionMiniWindowAtTopRight(size: TauriLogicalSize): Promise<void> {
+  const { getCurrentWindow, currentMonitor, primaryMonitor, PhysicalPosition } = await import("@tauri-apps/api/window");
+  const appWindow = getCurrentWindow();
+  const monitor = (await currentMonitor()) ?? (await primaryMonitor());
+  if (!monitor) return;
+
+  const physicalSize = size.toPhysical(monitor.scaleFactor);
+  const physicalMargin = Math.round(MINI_WINDOW_MARGIN * monitor.scaleFactor);
+  const workArea = monitor.workArea;
+  const x = workArea.position.x + workArea.size.width - physicalSize.width - physicalMargin;
+  const y = workArea.position.y + physicalMargin;
+
+  await appWindow.setPosition(new PhysicalPosition(Math.max(workArea.position.x, x), y));
+}
+
+export async function startWindowDrag(): Promise<void> {
+  if (!isTauriRuntime()) return;
+
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().startDragging();
+  } catch (error) {
+    console.warn("Failed to start window drag.", error);
+  }
+}
+
+export async function startWindowResize(): Promise<void> {
+  if (!isTauriRuntime()) return;
+
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().startResizeDragging("SouthEast");
+  } catch (error) {
+    console.warn("Failed to start window resize.", error);
+  }
 }
 
 export async function registerWindowCloseBehavior(

@@ -27,6 +27,12 @@
   margin-bottom: 22px;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .eyebrow {
   margin: 0 0 4px;
   color: #66777f;
@@ -77,6 +83,8 @@ h3 {
 .status-pill svg,
 .icon-button svg,
 .icon-only svg,
+.mini-state svg,
+.mini-resize-handle svg,
 .check-row svg,
 .loading-shell svg {
   width: 18px;
@@ -446,6 +454,198 @@ button:focus-visible {
   padding: 10px 12px;
   color: #9f1239;
   background: #fff1f2;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.mini-shell {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  gap: 7px;
+  min-height: 100vh;
+  padding: 10px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(250, 251, 248, 0.95), rgba(244, 246, 242, 0.98)),
+    #f5f6f1;
+}
+
+.mini-shell.is-due {
+  background:
+    linear-gradient(180deg, rgba(255, 250, 241, 0.97), rgba(250, 243, 231, 0.98)),
+    #fff7ed;
+}
+
+.mini-drag-region {
+  position: absolute;
+  top: 0;
+  right: 76px;
+  left: 0;
+  z-index: 2;
+  height: 34px;
+  cursor: move;
+}
+
+.mini-status-row,
+.mini-actions {
+  display: flex;
+  align-items: center;
+}
+
+.mini-status-card {
+  display: grid;
+  align-content: center;
+  min-height: 92px;
+  border: 1px solid #d9e1df;
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 24px rgba(26, 38, 43, 0.08);
+}
+
+.mini-shell.busy .mini-status-card,
+.mini-shell.is-due .mini-status-card {
+  border-color: #e8b16f;
+  background: #fffaf1;
+}
+
+.mini-shell.rest .mini-status-card {
+  border-color: #7db8b2;
+  background: #f0fbf7;
+}
+
+.mini-shell.paused .mini-status-card,
+.mini-shell.idle .mini-status-card {
+  border-color: #cfd8d6;
+  background: #fbfcfb;
+}
+
+.mini-status-row {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mini-card-tools {
+  position: relative;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mini-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 78px;
+  color: #214046;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.mini-state.busy,
+.mini-state.is-due {
+  color: #713f12;
+}
+
+.mini-state.rest {
+  color: #0f5955;
+}
+
+.mini-state.paused,
+.mini-state.idle {
+  color: #44515d;
+}
+
+.mini-caption {
+  color: #64747b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.mini-expand {
+  width: 30px;
+  height: 30px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.mini-timer {
+  display: block;
+  margin-top: 4px;
+  color: #172026;
+  font-size: 29px;
+  line-height: 1.08;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.mini-task-name {
+  display: block;
+  margin-top: 2px;
+  color: #64747b;
+  font-size: 12px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-task-form input {
+  min-height: 36px;
+  padding: 8px 10px;
+}
+
+.mini-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mini-actions .icon-button {
+  min-height: 36px;
+  padding: 7px;
+  font-size: 13px;
+}
+
+.mini-error {
+  margin: 0;
+  border: 1px solid #fecdd3;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #9f1239;
+  background: #fff1f2;
+  font-size: 12px;
+}
+
+.mini-resize-handle {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  color: #77858b;
+  background: transparent;
+  cursor: nwse-resize;
+}
+
+.mini-resize-handle:hover {
+  color: #172026;
+  background: rgba(255, 255, 255, 0.72);
 }
 
 @media (max-width: 1100px) {
