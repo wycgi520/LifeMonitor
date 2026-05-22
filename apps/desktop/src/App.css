@@ -31,6 +31,42 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.date-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.date-picker {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 150px);
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  box-sizing: border-box;
+  border: 1px solid #cbd6d4;
+  border-radius: 7px;
+  padding: 0 10px;
+  color: #1c2a2f;
+  background: #ffffff;
+}
+
+.date-picker input {
+  width: 150px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-weight: 800;
+}
+
+.date-picker input:focus {
+  outline: 0;
 }
 
 .eyebrow {
@@ -83,6 +119,7 @@ h3 {
 .status-pill svg,
 .icon-button svg,
 .icon-only svg,
+.date-picker svg,
 .mini-state svg,
 .mini-resize-handle svg,
 .check-row svg,
@@ -277,6 +314,7 @@ button:focus-visible {
   padding: 0;
 }
 
+.icon-button:disabled,
 .icon-only:disabled {
   cursor: not-allowed;
   opacity: 0.45;
@@ -713,6 +751,8 @@ button:focus-visible {
   }
 
   .topbar,
+  .topbar-actions,
+  .date-controls,
   .section-head,
   .panel-head,
   .task-input-row {
@@ -728,6 +768,11 @@ button:focus-visible {
   }
 
   .split-input {
+    width: 100%;
+  }
+
+  .date-picker,
+  .date-picker input {
     width: 100%;
   }
 }

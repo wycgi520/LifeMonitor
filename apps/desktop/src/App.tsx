@@ -1,6 +1,9 @@
 import {
   BellRing,
   BriefcaseBusiness,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   Check,
   Clock3,
   Coffee,
@@ -70,6 +73,10 @@ function App() {
   const orderedSegments = useMemo(
     () => [...monitor.segments].sort((left, right) => left.startedAt.localeCompare(right.startedAt)),
     [monitor.segments],
+  );
+  const selectedDateLabel = useMemo(
+    () => formatDateLabel(monitor.selectedDate, monitor.isViewingToday),
+    [monitor.isViewingToday, monitor.selectedDate],
   );
 
   const statusTone = monitor.snapshot.isDue ? "is-due" : monitor.state;
@@ -154,6 +161,39 @@ function App() {
           <h1>今天在做什么</h1>
         </div>
         <div className="topbar-actions">
+          <div className="date-controls" aria-label="查看记录日期">
+            <button type="button" className="icon-only" onClick={monitor.goToPreviousDay} title="前一天">
+              <ChevronLeft aria-hidden="true" />
+            </button>
+            <label className="date-picker" title="选择日期">
+              <CalendarDays aria-hidden="true" />
+              <input
+                type="date"
+                value={monitor.selectedDate}
+                max={toDateInputValue(new Date())}
+                onChange={(event) => monitor.setSelectedDate(event.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="icon-only"
+              onClick={monitor.goToNextDay}
+              disabled={monitor.isViewingToday}
+              title="后一天"
+            >
+              <ChevronRight aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={monitor.goToToday}
+              disabled={monitor.isViewingToday}
+              title="回到今天"
+            >
+              <CalendarDays aria-hidden="true" />
+              <span>今天</span>
+            </button>
+          </div>
           <button
             type="button"
             className="icon-only"
@@ -244,11 +284,11 @@ function App() {
           </div>
         </div>
 
-        <section className="stats-panel" aria-label="今日统计">
+        <section className="stats-panel" aria-label={`${selectedDateLabel}统计`}>
           <div className="panel-head">
             <div>
-              <p className="eyebrow">今日统计</p>
-              <h2>本地自然日</h2>
+              <p className="eyebrow">{monitor.isViewingToday ? "今日统计" : "历史统计"}</p>
+              <h2>{selectedDateLabel}</h2>
             </div>
           </div>
           <div className="stat-list">
@@ -278,7 +318,7 @@ function App() {
         <div className="section-head">
           <div>
             <p className="eyebrow">时间线</p>
-            <h2>今天每段时间</h2>
+            <h2>{selectedDateLabel}每段时间</h2>
           </div>
           <button type="button" className="icon-button" onClick={() => void monitor.refresh()}>
             <RefreshCw aria-hidden="true" />
@@ -287,7 +327,7 @@ function App() {
         </div>
         <div className="timeline">
           {orderedSegments.length === 0 ? (
-            <p className="empty-text">还没有记录。开始忙碌或休息后，这里会出现今天的时间线。</p>
+            <p className="empty-text">这一天还没有记录。切换日期可以查看其他自然日的时间线。</p>
           ) : (
             orderedSegments.map((segment, index) => (
               <TimelineRow
@@ -670,6 +710,26 @@ function toLocalInputValue(isoDate: string): string {
 
 function fromLocalInputValue(value: string): string {
   return new Date(value).toISOString();
+}
+
+function toDateInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = (date.getMonth() + 1).toString().padStart(2, "0");
+  const day = date.getDate().toString().padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateLabel(value: string, isToday: boolean): string {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  const formatted = new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+  }).format(date);
+
+  return isToday ? `今天 ${formatted}` : formatted;
 }
 
 function clampMinutes(value: number, min: number, max: number): number {

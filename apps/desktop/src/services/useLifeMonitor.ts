@@ -32,8 +32,14 @@ export interface LifeMonitorController {
   error: string | null;
   state: LifeState;
   settings: LifeSettings;
+  selectedDate: string;
+  isViewingToday: boolean;
   taskDraft: string;
   setTaskDraft: (value: string) => void;
+  setSelectedDate: (value: string) => void;
+  goToPreviousDay: () => void;
+  goToNextDay: () => void;
+  goToToday: () => void;
   segments: TimelineSegment[];
   activeSegment: TimelineSegment | null;
   stats: TodayStats;
@@ -58,6 +64,7 @@ export function useLifeMonitor(): LifeMonitorController {
   const [repository, setRepository] = useState<LifeRepository | null>(null);
   const [settings, setSettings] = useState<LifeSettings>(DEFAULT_SETTINGS);
   const [state, setState] = useState<LifeState>("idle");
+  const [selectedDate, setSelectedDateState] = useState(() => toLocalDateKey(new Date()));
   const [taskDraft, setTaskDraft] = useState("");
   const [segments, setSegments] = useState<TimelineSegment[]>([]);
   const [activeSegment, setActiveSegment] = useState<TimelineSegment | null>(null);
@@ -69,12 +76,36 @@ export function useLifeMonitor(): LifeMonitorController {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const initialized = useRef(false);
+  const lastTodayKey = useRef(toLocalDateKey(new Date()));
+
+  const selectedDayRange = useMemo(() => getDayRangeForDateKey(selectedDate), [selectedDate]);
+  const todayKey = useMemo(() => toLocalDateKey(new Date(nowIso)), [nowIso]);
+  const isViewingToday = selectedDate === todayKey;
+
+  const setSelectedDate = useCallback((value: string) => {
+    if (!isLocalDateKey(value)) return;
+    setSelectedDateState(value);
+  }, []);
+
+  const goToPreviousDay = useCallback(() => {
+    setSelectedDateState((current) => shiftLocalDateKey(current, -1));
+  }, []);
+
+  const goToNextDay = useCallback(() => {
+    setSelectedDateState((current) => {
+      const next = shiftLocalDateKey(current, 1);
+      return next > toLocalDateKey(new Date()) ? current : next;
+    });
+  }, []);
+
+  const goToToday = useCallback(() => {
+    setSelectedDateState(toLocalDateKey(new Date()));
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!repository) return;
-    const { startIso, endIso } = getLocalDayRange();
-    setSegments(await repository.listSegments(startIso, endIso));
-  }, [repository]);
+    setSegments(await repository.listSegments(selectedDayRange.startIso, selectedDayRange.endIso));
+  }, [repository, selectedDayRange.endIso, selectedDayRange.startIso]);
 
   useEffect(() => {
     if (initialized.current) return;
@@ -85,14 +116,13 @@ export function useLifeMonitor(): LifeMonitorController {
         const nextRepository = await createRepository();
         const nextSettings = await nextRepository.loadSettings();
         const openSegment = await nextRepository.getOpenSegment();
-        const { startIso, endIso } = getLocalDayRange();
 
         setRepository(nextRepository);
         setSettings(nextSettings);
         setActiveSegment(openSegment);
         setState(openSegment?.state ?? "idle");
         setTaskDraft(openSegment?.taskName ?? "");
-        setSegments(await nextRepository.listSegments(startIso, endIso));
+        setSegments(await nextRepository.listSegments(selectedDayRange.startIso, selectedDayRange.endIso));
         await syncPlatformSettings(nextSettings);
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : String(caught));
@@ -102,7 +132,7 @@ export function useLifeMonitor(): LifeMonitorController {
     };
 
     void init();
-  }, []);
+  }, [selectedDayRange.endIso, selectedDayRange.startIso]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -111,6 +141,35 @@ export function useLifeMonitor(): LifeMonitorController {
 
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    const nextTodayKey = toLocalDateKey(new Date(nowIso));
+    const previousTodayKey = lastTodayKey.current;
+    if (nextTodayKey === previousTodayKey) return;
+
+    lastTodayKey.current = nextTodayKey;
+    setSelectedDateState((current) => (current === previousTodayKey ? nextTodayKey : current));
+  }, [nowIso]);
+
+  useEffect(() => {
+    if (!repository) return;
+
+    let disposed = false;
+    void repository
+      .listSegments(selectedDayRange.startIso, selectedDayRange.endIso)
+      .then((nextSegments) => {
+        if (disposed) return;
+        setSegments(nextSegments);
+        setError(null);
+      })
+      .catch((caught) => {
+        if (!disposed) setError(caught instanceof Error ? caught.message : String(caught));
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [repository, selectedDayRange.endIso, selectedDayRange.startIso]);
 
   useEffect(() => {
     if (!repository) return;
@@ -139,9 +198,8 @@ export function useLifeMonitor(): LifeMonitorController {
   }, [repository, settings]);
 
   const stats = useMemo(() => {
-    const { startIso, endIso } = getLocalDayRange();
-    return calculateTodayStats(segments, startIso, endIso, nowIso);
-  }, [nowIso, segments]);
+    return calculateTodayStats(segments, selectedDayRange.startIso, selectedDayRange.endIso, nowIso);
+  }, [nowIso, segments, selectedDayRange.endIso, selectedDayRange.startIso]);
 
   const snapshotSegment = useMemo(() => {
     if (!activeSegment) return null;
@@ -189,14 +247,13 @@ export function useLifeMonitor(): LifeMonitorController {
       if (!repository) return;
       try {
         await operation(repository);
-        const { startIso, endIso } = getLocalDayRange();
-        setSegments(await repository.listSegments(startIso, endIso));
+        setSegments(await repository.listSegments(selectedDayRange.startIso, selectedDayRange.endIso));
         setError(null);
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : String(caught));
       }
     },
-    [repository],
+    [repository, selectedDayRange.endIso, selectedDayRange.startIso],
   );
 
   const closeCurrent = useCallback(
@@ -424,8 +481,14 @@ export function useLifeMonitor(): LifeMonitorController {
     error,
     state,
     settings,
+    selectedDate,
+    isViewingToday,
     taskDraft,
     setTaskDraft,
+    setSelectedDate,
+    goToPreviousDay,
+    goToNextDay,
+    goToToday,
     segments,
     activeSegment,
     stats,
@@ -445,4 +508,30 @@ export function useLifeMonitor(): LifeMonitorController {
     deleteSegment,
     refresh,
   };
+}
+
+function toLocalDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = (date.getMonth() + 1).toString().padStart(2, "0");
+  const day = date.getDate().toString().padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function isLocalDateKey(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function dateFromLocalDateKey(value: string): Date {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function getDayRangeForDateKey(value: string): { startIso: string; endIso: string } {
+  return getLocalDayRange(dateFromLocalDateKey(value));
+}
+
+function shiftLocalDateKey(value: string, days: number): string {
+  const date = dateFromLocalDateKey(value);
+  date.setDate(date.getDate() + days);
+  return toLocalDateKey(date);
 }
