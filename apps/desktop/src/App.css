@@ -3,8 +3,8 @@
   padding: 28px;
   color: #172026;
   background:
-    linear-gradient(180deg, rgba(247, 249, 248, 0.92), rgba(242, 244, 241, 0.96)),
-    #f5f6f1;
+    linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(241, 245, 249, 0.98)),
+    #f6f8fb;
 }
 
 .loading-shell {
@@ -24,7 +24,7 @@
 }
 
 .topbar {
-  margin-bottom: 22px;
+  margin-bottom: 14px;
 }
 
 .topbar-actions {
@@ -33,6 +33,43 @@
   gap: 10px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.page-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+}
+
+.page-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  border: 1px solid #cad5da;
+  border-radius: 7px;
+  padding: 8px 14px;
+  color: #30434b;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 850;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.page-tab.active {
+  border-color: #172026;
+  color: #ffffff;
+  background: #172026;
+}
+
+.page-content {
+  min-width: 0;
 }
 
 .date-controls {
@@ -117,6 +154,7 @@ h3 {
 }
 
 .status-pill svg,
+.page-tab svg,
 .icon-button svg,
 .icon-only svg,
 .date-picker svg,
@@ -150,8 +188,19 @@ h3 {
 
 .dashboard {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(300px, 0.8fr);
+  grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.85fr);
   gap: 18px;
+  align-items: start;
+}
+
+.stats-page,
+.analysis-layout {
+  display: grid;
+  gap: 18px;
+}
+
+.analysis-layout {
+  grid-template-columns: minmax(280px, 0.78fr) minmax(0, 1.22fr);
   align-items: start;
 }
 
@@ -162,8 +211,8 @@ h3 {
 .reminder {
   border: 1px solid #d9e1df;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 12px 32px rgba(26, 38, 43, 0.08);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 12px 32px rgba(26, 38, 43, 0.07);
 }
 
 .focus-panel,
@@ -180,6 +229,7 @@ h3 {
   background: #fff7ed;
   font-size: 14px;
   font-weight: 800;
+  white-space: nowrap;
 }
 
 .timer-grid,
@@ -190,8 +240,12 @@ h3 {
   margin: 20px 0;
 }
 
-.stat-list {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.stat-list.compact {
+  grid-template-columns: 1fr;
+}
+
+.stat-list.expanded {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .metric {
@@ -324,27 +378,91 @@ button:focus-visible {
   color: #9f1239;
 }
 
+.balance-bars {
+  display: grid;
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.ratio-row,
+.task-stats {
+  min-width: 0;
+}
+
+.ratio-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+
+.ratio-meta span,
+.ratio-meta em {
+  color: #64747b;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.ratio-meta strong {
+  color: #172026;
+  font-size: 15px;
+}
+
+.progress-track {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8eef0;
+}
+
+.progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  transition: width 160ms ease;
+}
+
+.progress-bar.busy {
+  background: #0f766e;
+}
+
+.progress-bar.rest {
+  background: #277b85;
+}
+
 .task-stats {
   border-top: 1px solid #e1e8e6;
   padding-top: 16px;
 }
 
 .task-stat-row {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 14px;
-  padding: 8px 0;
+  padding: 9px 0;
   border-bottom: 1px solid #edf1ef;
   color: #43545b;
 }
 
-.task-stat-row strong {
-  color: #172026;
+.task-stat-row.with-bar {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
-.timeline-section,
-.settings-section {
-  margin-top: 18px;
+.task-stat-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.task-stat-row strong {
+  color: #172026;
+  white-space: nowrap;
+}
+
+.task-progress {
+  grid-column: 1 / -1;
+  height: 7px;
 }
 
 .timeline {
@@ -727,12 +845,17 @@ button:focus-visible {
   background: rgba(255, 255, 255, 0.72);
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1120px) {
   .dashboard,
+  .analysis-layout,
   .timeline-row,
   .reminder,
   .settings-form {
     grid-template-columns: 1fr;
+  }
+
+  .stat-list.expanded {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .timeline-fields {
@@ -761,8 +884,24 @@ button:focus-visible {
     display: flex;
   }
 
+  h1 {
+    font-size: 28px;
+  }
+
+  .page-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .page-tab {
+    min-width: 0;
+    padding: 8px 6px;
+  }
+
   .timer-grid,
   .stat-list,
+  .stat-list.expanded,
   .timeline-fields {
     grid-template-columns: 1fr;
   }

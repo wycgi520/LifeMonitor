@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   BellRing,
   BriefcaseBusiness,
   CalendarDays,
@@ -8,6 +9,7 @@ import {
   Clock3,
   Coffee,
   Grip,
+  ListTree,
   Maximize2,
   Merge,
   Minimize2,
@@ -44,6 +46,9 @@ import {
 
 const WINDOW_MODE_STORAGE_KEY = "lifemonitor:window-mode:v1";
 
+type PageId = "today" | "timeline" | "stats" | "settings";
+type MonitorController = ReturnType<typeof useLifeMonitor>;
+
 const stateLabels = {
   idle: "空闲",
   busy: "忙碌",
@@ -56,10 +61,25 @@ const trackableStateLabels: Record<TrackableState, string> = {
   rest: "休息",
 };
 
+const pageItems = [
+  { id: "today", label: "今日", Icon: BriefcaseBusiness },
+  { id: "timeline", label: "时间线", Icon: ListTree },
+  { id: "stats", label: "统计", Icon: BarChart3 },
+  { id: "settings", label: "设置", Icon: Settings2 },
+] as const;
+
+const pageCopy: Record<PageId, { eyebrow: string; title: string }> = {
+  today: { eyebrow: "LifeMonitor", title: "今天在做什么" },
+  timeline: { eyebrow: "记录回看", title: "时间线" },
+  stats: { eyebrow: "数据回顾", title: "统计" },
+  settings: { eyebrow: "应用偏好", title: "设置" },
+};
+
 function App() {
   const monitor = useLifeMonitor();
   const [settingsDraft, setSettingsDraft] = useState<LifeSettings>(DEFAULT_SETTINGS);
   const [windowMode, setWindowMode] = useState<AppWindowMode>(() => readWindowMode());
+  const [activePage, setActivePage] = useState<PageId>("today");
 
   useEffect(() => {
     setSettingsDraft(monitor.settings);
@@ -80,6 +100,7 @@ function App() {
   );
 
   const statusTone = monitor.snapshot.isDue ? "is-due" : monitor.state;
+  const showDateControls = activePage === "timeline" || activePage === "stats";
 
   const saveSettings = async (event: FormEvent) => {
     event.preventDefault();
@@ -89,6 +110,11 @@ function App() {
       restMinutes: clampMinutes(settingsDraft.restMinutes, 1, 120),
       quickTasks: settingsDraft.quickTasks.map((task) => task.trim()).filter(Boolean),
     });
+  };
+
+  const openPage = (page: PageId) => {
+    setActivePage(page);
+    if (page === "today") monitor.goToToday();
   };
 
   if (monitor.loading) {
@@ -101,105 +127,21 @@ function App() {
   }
 
   if (windowMode === "mini") {
-    return (
-      <MiniReminderWindow
-        monitor={monitor}
-        statusTone={statusTone}
-        onExpand={() => setWindowMode("full")}
-      />
-    );
+    return <MiniReminderWindow monitor={monitor} statusTone={statusTone} onExpand={() => setWindowMode("full")} />;
   }
 
   return (
     <main className="app-shell">
-      {monitor.reminderVisible && (
-        <section className="reminder" aria-live="assertive">
-          <div>
-            <p className="eyebrow">到点提醒</p>
-            <h2>{monitor.state === "busy" ? "该休息一下了" : "休息时间到了"}</h2>
-            <p>
-              当前{stateLabels[monitor.state]}已持续 {formatDuration(monitor.snapshot.elapsedSeconds)}，超时{" "}
-              {formatDuration(monitor.snapshot.overtimeSeconds)}。
-            </p>
-            <p className="muted">当前任务：{monitor.snapshot.taskName ?? UNMARKED_TASK}</p>
-          </div>
-          <div className="reminder-actions">
-            <button type="button" className="icon-button" onClick={() => void monitor.extend(5)} title="延长 5 分钟">
-              <Clock3 aria-hidden="true" />
-              <span>5 分钟</span>
-            </button>
-            <button type="button" className="icon-button" onClick={() => void monitor.extend(10)} title="延长 10 分钟">
-              <Clock3 aria-hidden="true" />
-              <span>10 分钟</span>
-            </button>
-            {monitor.state === "busy" ? (
-              <button type="button" className="icon-button primary" onClick={() => void monitor.startRest()} title="开始休息">
-                <Coffee aria-hidden="true" />
-                <span>开始休息</span>
-              </button>
-            ) : (
-              <button type="button" className="icon-button primary" onClick={() => void monitor.startBusy()} title="继续忙碌">
-                <BriefcaseBusiness aria-hidden="true" />
-                <span>继续忙碌</span>
-              </button>
-            )}
-            <button type="button" className="icon-button" onClick={monitor.acknowledgeReminder} title="继续当前状态">
-              <Check aria-hidden="true" />
-              <span>继续</span>
-            </button>
-            <button type="button" className="icon-button" onClick={() => void monitor.pause()} title="暂停记录">
-              <Pause aria-hidden="true" />
-              <span>暂停</span>
-            </button>
-          </div>
-        </section>
-      )}
+      {monitor.reminderVisible && <ReminderBanner monitor={monitor} />}
 
       <header className="topbar">
         <div>
-          <p className="eyebrow">LifeMonitor</p>
-          <h1>今天在做什么</h1>
+          <p className="eyebrow">{pageCopy[activePage].eyebrow}</p>
+          <h1>{pageCopy[activePage].title}</h1>
         </div>
         <div className="topbar-actions">
-          <div className="date-controls" aria-label="查看记录日期">
-            <button type="button" className="icon-only" onClick={monitor.goToPreviousDay} title="前一天">
-              <ChevronLeft aria-hidden="true" />
-            </button>
-            <label className="date-picker" title="选择日期">
-              <CalendarDays aria-hidden="true" />
-              <input
-                type="date"
-                value={monitor.selectedDate}
-                max={toDateInputValue(new Date())}
-                onChange={(event) => monitor.setSelectedDate(event.target.value)}
-              />
-            </label>
-            <button
-              type="button"
-              className="icon-only"
-              onClick={monitor.goToNextDay}
-              disabled={monitor.isViewingToday}
-              title="后一天"
-            >
-              <ChevronRight aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={monitor.goToToday}
-              disabled={monitor.isViewingToday}
-              title="回到今天"
-            >
-              <CalendarDays aria-hidden="true" />
-              <span>今天</span>
-            </button>
-          </div>
-          <button
-            type="button"
-            className="icon-only"
-            onClick={() => setWindowMode("mini")}
-            title="切换到迷你提醒窗"
-          >
+          {showDateControls && <DateControls monitor={monitor} />}
+          <button type="button" className="icon-only" onClick={() => setWindowMode("mini")} title="切换到迷你提醒窗">
             <Minimize2 aria-hidden="true" />
           </button>
           <div className={`status-pill ${statusTone}`}>
@@ -209,242 +151,433 @@ function App() {
         </div>
       </header>
 
+      <nav className="page-tabs" aria-label="主页面">
+        {pageItems.map((item) => {
+          const Icon = item.Icon;
+          const isActive = activePage === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className={`page-tab ${isActive ? "active" : ""}`}
+              aria-current={isActive ? "page" : undefined}
+              onClick={() => openPage(item.id)}
+            >
+              <Icon aria-hidden="true" />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
       {monitor.error && <p className="error-line">{monitor.error}</p>}
 
-      <section className="dashboard">
-        <div className="focus-panel">
-          <div className="panel-head">
-            <div>
-              <p className="eyebrow">当前状态</p>
-              <h2>{stateLabels[monitor.state]}</h2>
-            </div>
-            <div className="due-text">
-              {monitor.state === "idle" || monitor.state === "paused"
-                ? "未计时"
-                : monitor.snapshot.isDue
-                  ? `超时 ${formatDuration(monitor.snapshot.overtimeSeconds)}`
-                  : `剩余 ${formatDuration(monitor.snapshot.remainingSeconds)}`}
-            </div>
-          </div>
+      <div className="page-content">
+        {activePage === "today" && <TodayPage monitor={monitor} />}
+        {activePage === "timeline" && (
+          <TimelinePage monitor={monitor} orderedSegments={orderedSegments} selectedDateLabel={selectedDateLabel} />
+        )}
+        {activePage === "stats" && <StatsPage monitor={monitor} selectedDateLabel={selectedDateLabel} />}
+        {activePage === "settings" && (
+          <SettingsPage
+            settingsDraft={settingsDraft}
+            setSettingsDraft={setSettingsDraft}
+            onSubmit={saveSettings}
+          />
+        )}
+      </div>
+    </main>
+  );
+}
 
-          <div className="timer-grid">
-            <Metric label="已持续" value={formatDuration(monitor.snapshot.elapsedSeconds)} />
-            <Metric label="目标" value={`${monitor.snapshot.targetMinutes} 分钟`} />
-            <Metric label="当前任务" value={monitor.snapshot.taskName ?? UNMARKED_TASK} />
-          </div>
+function ReminderBanner({ monitor }: { monitor: MonitorController }) {
+  return (
+    <section className="reminder" aria-live="assertive">
+      <div>
+        <p className="eyebrow">到点提醒</p>
+        <h2>{monitor.state === "busy" ? "该休息一下了" : "休息时间到了"}</h2>
+        <p>
+          当前{stateLabels[monitor.state]}已持续 {formatDuration(monitor.snapshot.elapsedSeconds)}，超时{" "}
+          {formatDuration(monitor.snapshot.overtimeSeconds)}。
+        </p>
+        <p className="muted">当前任务：{monitor.snapshot.taskName ?? UNMARKED_TASK}</p>
+      </div>
+      <div className="reminder-actions">
+        <button type="button" className="icon-button" onClick={() => void monitor.extend(5)} title="延长 5 分钟">
+          <Clock3 aria-hidden="true" />
+          <span>5 分钟</span>
+        </button>
+        <button type="button" className="icon-button" onClick={() => void monitor.extend(10)} title="延长 10 分钟">
+          <Clock3 aria-hidden="true" />
+          <span>10 分钟</span>
+        </button>
+        {monitor.state === "busy" ? (
+          <button type="button" className="icon-button primary" onClick={() => void monitor.startRest()} title="开始休息">
+            <Coffee aria-hidden="true" />
+            <span>开始休息</span>
+          </button>
+        ) : (
+          <button type="button" className="icon-button primary" onClick={() => void monitor.startBusy()} title="继续忙碌">
+            <BriefcaseBusiness aria-hidden="true" />
+            <span>继续忙碌</span>
+          </button>
+        )}
+        <button type="button" className="icon-button" onClick={monitor.acknowledgeReminder} title="继续当前状态">
+          <Check aria-hidden="true" />
+          <span>继续</span>
+        </button>
+        <button type="button" className="icon-button" onClick={() => void monitor.pause()} title="暂停记录">
+          <Pause aria-hidden="true" />
+          <span>暂停</span>
+        </button>
+      </div>
+    </section>
+  );
+}
 
-          <div className="task-form">
-            <label htmlFor="task-input">活动内容</label>
-            <div className="task-input-row">
-              <input
-                id="task-input"
-                value={monitor.taskDraft}
-                placeholder="工作 / 散步 / 喝水"
-                onChange={(event) => monitor.setTaskDraft(event.target.value)}
-              />
-            </div>
-          </div>
+function DateControls({ monitor }: { monitor: MonitorController }) {
+  return (
+    <div className="date-controls" aria-label="查看记录日期">
+      <button type="button" className="icon-only" onClick={monitor.goToPreviousDay} title="前一天">
+        <ChevronLeft aria-hidden="true" />
+      </button>
+      <label className="date-picker" title="选择日期">
+        <CalendarDays aria-hidden="true" />
+        <input
+          type="date"
+          value={monitor.selectedDate}
+          max={toDateInputValue(new Date())}
+          onChange={(event) => monitor.setSelectedDate(event.target.value)}
+        />
+      </label>
+      <button
+        type="button"
+        className="icon-only"
+        onClick={monitor.goToNextDay}
+        disabled={monitor.isViewingToday}
+        title="后一天"
+      >
+        <ChevronRight aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        className="icon-button"
+        onClick={monitor.goToToday}
+        disabled={monitor.isViewingToday}
+        title="回到今天"
+      >
+        <CalendarDays aria-hidden="true" />
+        <span>今天</span>
+      </button>
+    </div>
+  );
+}
 
-          <div className="quick-tasks">
-            {monitor.settings.quickTasks.map((task) => (
-              <button key={task} type="button" onClick={() => monitor.setTaskDraft(task)}>
-                {task}
-              </button>
-            ))}
-          </div>
-
-          <div className="action-grid">
-            <button type="button" className="icon-button primary" onClick={() => void monitor.startBusy()}>
-              <Play aria-hidden="true" />
-              <span>开始忙碌</span>
-            </button>
-            <button type="button" className="icon-button rest" onClick={() => void monitor.startRest()}>
-              <Coffee aria-hidden="true" />
-              <span>开始休息</span>
-            </button>
-            {monitor.state === "paused" ? (
-              <button type="button" className="icon-button" onClick={() => void monitor.resume()}>
-                <Play aria-hidden="true" />
-                <span>继续</span>
-              </button>
-            ) : (
-              <button type="button" className="icon-button" onClick={() => void monitor.pause()}>
-                <Pause aria-hidden="true" />
-                <span>暂停</span>
-              </button>
-            )}
-            <button type="button" className="icon-button" onClick={() => void monitor.extend(5)}>
-              <Clock3 aria-hidden="true" />
-              <span>延长 5 分钟</span>
-            </button>
-            <button type="button" className="icon-button" onClick={() => void monitor.extend(10)}>
-              <Clock3 aria-hidden="true" />
-              <span>延长 10 分钟</span>
-            </button>
+function TodayPage({ monitor }: { monitor: MonitorController }) {
+  return (
+    <section className="dashboard today-layout">
+      <FocusPanel monitor={monitor} />
+      <section className="stats-panel today-summary" aria-label="今日概览">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">今日概览</p>
+            <h2>关键数据</h2>
           </div>
         </div>
+        <div className="stat-list compact">
+          <Metric label="忙碌总时长" value={formatDuration(monitor.stats.busySeconds)} />
+          <Metric label="休息总时长" value={formatDuration(monitor.stats.restSeconds)} />
+          <Metric label="待补记忙碌" value={formatDuration(monitor.stats.unmarkedSeconds)} />
+        </div>
+        <TaskStatsList tasks={monitor.stats.taskStats.slice(0, 4)} emptyText="今天还没有忙碌记录" />
+      </section>
+    </section>
+  );
+}
 
-        <section className="stats-panel" aria-label={`${selectedDateLabel}统计`}>
+function FocusPanel({ monitor }: { monitor: MonitorController }) {
+  const canExtend = monitor.state === "busy" || monitor.state === "rest";
+
+  return (
+    <section className="focus-panel">
+      <div className="panel-head">
+        <div>
+          <p className="eyebrow">当前状态</p>
+          <h2>{stateLabels[monitor.state]}</h2>
+        </div>
+        <div className="due-text">
+          {monitor.state === "idle" || monitor.state === "paused"
+            ? "未计时"
+            : monitor.snapshot.isDue
+              ? `超时 ${formatDuration(monitor.snapshot.overtimeSeconds)}`
+              : `剩余 ${formatDuration(monitor.snapshot.remainingSeconds)}`}
+        </div>
+      </div>
+
+      <div className="timer-grid">
+        <Metric label="已持续" value={formatDuration(monitor.snapshot.elapsedSeconds)} />
+        <Metric label="目标" value={`${monitor.snapshot.targetMinutes} 分钟`} />
+        <Metric label="当前任务" value={monitor.snapshot.taskName ?? UNMARKED_TASK} />
+      </div>
+
+      <div className="task-form">
+        <label htmlFor="task-input">活动内容</label>
+        <div className="task-input-row">
+          <input
+            id="task-input"
+            value={monitor.taskDraft}
+            placeholder="工作 / 散步 / 喝水"
+            onChange={(event) => monitor.setTaskDraft(event.target.value)}
+          />
+        </div>
+      </div>
+
+      {monitor.settings.quickTasks.length > 0 && (
+        <div className="quick-tasks">
+          {monitor.settings.quickTasks.map((task) => (
+            <button key={task} type="button" onClick={() => monitor.setTaskDraft(task)}>
+              {task}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="action-grid">
+        <button type="button" className="icon-button primary" onClick={() => void monitor.startBusy()}>
+          <Play aria-hidden="true" />
+          <span>开始忙碌</span>
+        </button>
+        <button type="button" className="icon-button rest" onClick={() => void monitor.startRest()}>
+          <Coffee aria-hidden="true" />
+          <span>开始休息</span>
+        </button>
+        {monitor.state === "paused" ? (
+          <button type="button" className="icon-button" onClick={() => void monitor.resume()}>
+            <Play aria-hidden="true" />
+            <span>继续</span>
+          </button>
+        ) : (
+          <button type="button" className="icon-button" onClick={() => void monitor.pause()}>
+            <Pause aria-hidden="true" />
+            <span>暂停</span>
+          </button>
+        )}
+        <button type="button" className="icon-button" disabled={!canExtend} onClick={() => void monitor.extend(5)}>
+          <Clock3 aria-hidden="true" />
+          <span>延长 5 分钟</span>
+        </button>
+        <button type="button" className="icon-button" disabled={!canExtend} onClick={() => void monitor.extend(10)}>
+          <Clock3 aria-hidden="true" />
+          <span>延长 10 分钟</span>
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function TimelinePage({
+  monitor,
+  orderedSegments,
+  selectedDateLabel,
+}: {
+  monitor: MonitorController;
+  orderedSegments: TimelineSegment[];
+  selectedDateLabel: string;
+}) {
+  return (
+    <section className="timeline-section">
+      <div className="section-head">
+        <div>
+          <p className="eyebrow">时间线</p>
+          <h2>{selectedDateLabel}每段时间</h2>
+        </div>
+        <button type="button" className="icon-button" onClick={() => void monitor.refresh()}>
+          <RefreshCw aria-hidden="true" />
+          <span>刷新</span>
+        </button>
+      </div>
+      <div className="timeline">
+        {orderedSegments.length === 0 ? (
+          <p className="empty-text">这一天还没有记录。切换日期可以查看其他自然日的时间线。</p>
+        ) : (
+          orderedSegments.map((segment, index) => (
+            <TimelineRow
+              key={segment.id}
+              segment={segment}
+              previous={index > 0 ? orderedSegments[index - 1] : null}
+              isActive={segment.id === monitor.activeSegment?.id}
+              onUpdate={monitor.updateSegment}
+              onSplit={monitor.splitSegment}
+              onMerge={monitor.mergeWithPrevious}
+              onDelete={monitor.deleteSegment}
+            />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function StatsPage({ monitor, selectedDateLabel }: { monitor: MonitorController; selectedDateLabel: string }) {
+  const totalTrackedSeconds = monitor.stats.busySeconds + monitor.stats.restSeconds;
+  const busyRatio = percentage(monitor.stats.busySeconds, totalTrackedSeconds);
+  const restRatio = percentage(monitor.stats.restSeconds, totalTrackedSeconds);
+
+  return (
+    <section className="stats-page">
+      <section className="stats-panel stats-wide" aria-label={`${selectedDateLabel}统计`}>
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">{monitor.isViewingToday ? "今日统计" : "历史统计"}</p>
+            <h2>{selectedDateLabel}</h2>
+          </div>
+        </div>
+        <div className="stat-list expanded">
+          <Metric label="忙碌总时长" value={formatDuration(monitor.stats.busySeconds)} />
+          <Metric label="休息总时长" value={formatDuration(monitor.stats.restSeconds)} />
+          <Metric label="超时忙碌" value={formatDuration(monitor.stats.overtimeBusySeconds)} />
+          <Metric label="超时休息" value={formatDuration(monitor.stats.overtimeRestSeconds)} />
+          <Metric label="待补记忙碌" value={formatDuration(monitor.stats.unmarkedSeconds)} />
+        </div>
+      </section>
+
+      <div className="analysis-layout">
+        <section className="stats-panel">
           <div className="panel-head">
             <div>
-              <p className="eyebrow">{monitor.isViewingToday ? "今日统计" : "历史统计"}</p>
-              <h2>{selectedDateLabel}</h2>
+              <p className="eyebrow">占比</p>
+              <h2>忙碌与休息</h2>
             </div>
           </div>
-          <div className="stat-list">
-            <Metric label="忙碌总时长" value={formatDuration(monitor.stats.busySeconds)} />
-            <Metric label="休息总时长" value={formatDuration(monitor.stats.restSeconds)} />
-            <Metric label="超时忙碌" value={formatDuration(monitor.stats.overtimeBusySeconds)} />
-            <Metric label="超时休息" value={formatDuration(monitor.stats.overtimeRestSeconds)} />
-            <Metric label="待补记忙碌" value={formatDuration(monitor.stats.unmarkedSeconds)} />
-          </div>
-          <div className="task-stats">
-            <h3>任务耗时</h3>
-            {monitor.stats.taskStats.length === 0 ? (
-              <p className="muted">还没有忙碌记录</p>
-            ) : (
-              monitor.stats.taskStats.map((task) => (
-                <div key={task.taskName} className="task-stat-row">
-                  <span>{task.taskName}</span>
-                  <strong>{formatDuration(task.seconds)}</strong>
-                </div>
-              ))
-            )}
+          <div className="balance-bars">
+            <RatioBar label="忙碌" value={monitor.stats.busySeconds} ratio={busyRatio} tone="busy" />
+            <RatioBar label="休息" value={monitor.stats.restSeconds} ratio={restRatio} tone="rest" />
           </div>
         </section>
-      </section>
 
-      <section className="timeline-section">
-        <div className="section-head">
-          <div>
-            <p className="eyebrow">时间线</p>
-            <h2>{selectedDateLabel}每段时间</h2>
+        <section className="stats-panel">
+          <div className="panel-head">
+            <div>
+              <p className="eyebrow">任务耗时</p>
+              <h2>忙碌内容分布</h2>
+            </div>
           </div>
-          <button type="button" className="icon-button" onClick={() => void monitor.refresh()}>
-            <RefreshCw aria-hidden="true" />
-            <span>刷新</span>
-          </button>
-        </div>
-        <div className="timeline">
-          {orderedSegments.length === 0 ? (
-            <p className="empty-text">这一天还没有记录。切换日期可以查看其他自然日的时间线。</p>
-          ) : (
-            orderedSegments.map((segment, index) => (
-              <TimelineRow
-                key={segment.id}
-                segment={segment}
-                previous={index > 0 ? orderedSegments[index - 1] : null}
-                isActive={segment.id === monitor.activeSegment?.id}
-                onUpdate={monitor.updateSegment}
-                onSplit={monitor.splitSegment}
-                onMerge={monitor.mergeWithPrevious}
-                onDelete={monitor.deleteSegment}
-              />
-            ))
-          )}
-        </div>
-      </section>
+          <TaskStatsList tasks={monitor.stats.taskStats} emptyText="这一天还没有忙碌记录" showBars />
+        </section>
+      </div>
+    </section>
+  );
+}
 
-      <section className="settings-section">
-        <div className="section-head">
-          <div>
-            <p className="eyebrow">设置</p>
-            <h2>提醒节奏</h2>
-          </div>
+function SettingsPage({
+  settingsDraft,
+  setSettingsDraft,
+  onSubmit,
+}: {
+  settingsDraft: LifeSettings;
+  setSettingsDraft: (updater: (current: LifeSettings) => LifeSettings) => void;
+  onSubmit: (event: FormEvent) => void;
+}) {
+  return (
+    <section className="settings-section">
+      <div className="section-head">
+        <div>
+          <p className="eyebrow">设置</p>
+          <h2>提醒节奏</h2>
         </div>
-        <form className="settings-form" onSubmit={(event) => void saveSettings(event)}>
-          <label>
-            忙碌分钟
-            <input
-              type="number"
-              min={1}
-              max={240}
-              value={settingsDraft.busyMinutes}
-              onChange={(event) =>
-                setSettingsDraft((current) => ({ ...current, busyMinutes: Number(event.target.value) }))
-              }
-            />
-          </label>
-          <label>
-            休息分钟
-            <input
-              type="number"
-              min={1}
-              max={120}
-              value={settingsDraft.restMinutes}
-              onChange={(event) =>
-                setSettingsDraft((current) => ({ ...current, restMinutes: Number(event.target.value) }))
-              }
-            />
-          </label>
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={settingsDraft.soundEnabled}
-              onChange={(event) =>
-                setSettingsDraft((current) => ({ ...current, soundEnabled: event.target.checked }))
-              }
-            />
-            <Volume2 aria-hidden="true" />
-            声音提醒
-          </label>
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={settingsDraft.alwaysOnTop}
-              onChange={(event) =>
-                setSettingsDraft((current) => ({ ...current, alwaysOnTop: event.target.checked }))
-              }
-            />
-            <Pin aria-hidden="true" />
-            窗口置顶
-          </label>
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={settingsDraft.autostart}
-              onChange={(event) =>
-                setSettingsDraft((current) => ({ ...current, autostart: event.target.checked }))
-              }
-            />
-            <Settings2 aria-hidden="true" />
-            开机自启
-          </label>
-          <label className="close-behavior-editor">
-            关闭窗口
-            <select
-              value={settingsDraft.closeWindowBehavior}
-              onChange={(event) =>
-                setSettingsDraft((current) => ({
-                  ...current,
-                  closeWindowBehavior: event.target.value as CloseWindowBehavior,
-                }))
-              }
-            >
-              <option value="ask">每次询问</option>
-              <option value="minimize-to-tray">缩小到托盘</option>
-              <option value="quit">直接退出</option>
-            </select>
-          </label>
-          <label className="quick-task-editor">
-            快捷任务
-            <input
-              value={settingsDraft.quickTasks.join(" / ")}
-              onChange={(event) =>
-                setSettingsDraft((current) => ({
-                  ...current,
-                  quickTasks: event.target.value.split("/"),
-                }))
-              }
-            />
-          </label>
-          <button type="submit" className="icon-button primary">
-            <Save aria-hidden="true" />
-            <span>保存设置</span>
-          </button>
-        </form>
-      </section>
-    </main>
+      </div>
+      <form className="settings-form" onSubmit={onSubmit}>
+        <label>
+          忙碌分钟
+          <input
+            type="number"
+            min={1}
+            max={240}
+            value={settingsDraft.busyMinutes}
+            onChange={(event) =>
+              setSettingsDraft((current) => ({ ...current, busyMinutes: Number(event.target.value) }))
+            }
+          />
+        </label>
+        <label>
+          休息分钟
+          <input
+            type="number"
+            min={1}
+            max={120}
+            value={settingsDraft.restMinutes}
+            onChange={(event) =>
+              setSettingsDraft((current) => ({ ...current, restMinutes: Number(event.target.value) }))
+            }
+          />
+        </label>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={settingsDraft.soundEnabled}
+            onChange={(event) =>
+              setSettingsDraft((current) => ({ ...current, soundEnabled: event.target.checked }))
+            }
+          />
+          <Volume2 aria-hidden="true" />
+          声音提醒
+        </label>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={settingsDraft.alwaysOnTop}
+            onChange={(event) =>
+              setSettingsDraft((current) => ({ ...current, alwaysOnTop: event.target.checked }))
+            }
+          />
+          <Pin aria-hidden="true" />
+          窗口置顶
+        </label>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={settingsDraft.autostart}
+            onChange={(event) =>
+              setSettingsDraft((current) => ({ ...current, autostart: event.target.checked }))
+            }
+          />
+          <Settings2 aria-hidden="true" />
+          开机自启
+        </label>
+        <label className="close-behavior-editor">
+          关闭窗口
+          <select
+            value={settingsDraft.closeWindowBehavior}
+            onChange={(event) =>
+              setSettingsDraft((current) => ({
+                ...current,
+                closeWindowBehavior: event.target.value as CloseWindowBehavior,
+              }))
+            }
+          >
+            <option value="ask">每次询问</option>
+            <option value="minimize-to-tray">缩小到托盘</option>
+            <option value="quit">直接退出</option>
+          </select>
+        </label>
+        <label className="quick-task-editor">
+          快捷任务
+          <input
+            value={settingsDraft.quickTasks.join(" / ")}
+            onChange={(event) =>
+              setSettingsDraft((current) => ({
+                ...current,
+                quickTasks: event.target.value.split("/"),
+              }))
+            }
+          />
+        </label>
+        <button type="submit" className="icon-button primary">
+          <Save aria-hidden="true" />
+          <span>保存设置</span>
+        </button>
+      </form>
+    </section>
   );
 }
 
@@ -453,7 +586,7 @@ function MiniReminderWindow({
   statusTone,
   onExpand,
 }: {
-  monitor: ReturnType<typeof useLifeMonitor>;
+  monitor: MonitorController;
   statusTone: string;
   onExpand: () => void;
 }) {
@@ -571,6 +704,66 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div className="metric">
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function RatioBar({
+  label,
+  value,
+  ratio,
+  tone,
+}: {
+  label: string;
+  value: number;
+  ratio: number;
+  tone: "busy" | "rest";
+}) {
+  return (
+    <div className="ratio-row">
+      <div className="ratio-meta">
+        <span>{label}</span>
+        <strong>{formatDuration(value)}</strong>
+        <em>{ratio}%</em>
+      </div>
+      <div className="progress-track">
+        <div className={`progress-bar ${tone}`} style={{ width: `${ratio}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function TaskStatsList({
+  tasks,
+  emptyText,
+  showBars = false,
+}: {
+  tasks: Array<{ taskName: string; seconds: number }>;
+  emptyText: string;
+  showBars?: boolean;
+}) {
+  const maxSeconds = Math.max(...tasks.map((task) => task.seconds), 0);
+
+  return (
+    <div className="task-stats">
+      {tasks.length === 0 ? (
+        <p className="muted">{emptyText}</p>
+      ) : (
+        tasks.map((task) => {
+          const ratio = percentage(task.seconds, maxSeconds);
+          return (
+            <div key={task.taskName} className={`task-stat-row ${showBars ? "with-bar" : ""}`}>
+              <span>{task.taskName}</span>
+              <strong>{formatDuration(task.seconds)}</strong>
+              {showBars && (
+                <div className="progress-track task-progress">
+                  <div className="progress-bar busy" style={{ width: `${ratio}%` }} />
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }
@@ -737,13 +930,18 @@ function clampMinutes(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
-function getTimerLabel(monitor: ReturnType<typeof useLifeMonitor>): string {
+function percentage(value: number, total: number): number {
+  if (total <= 0) return 0;
+  return Math.round((value / total) * 100);
+}
+
+function getTimerLabel(monitor: MonitorController): string {
   if (monitor.state === "idle") return "未计时";
   if (monitor.state === "paused") return "已暂停";
   return monitor.snapshot.isDue ? "超时" : "剩余";
 }
 
-function getTimerValue(monitor: ReturnType<typeof useLifeMonitor>): string {
+function getTimerValue(monitor: MonitorController): string {
   if (monitor.state === "idle" || monitor.state === "paused") return "0秒";
   return formatDuration(monitor.snapshot.isDue ? monitor.snapshot.overtimeSeconds : monitor.snapshot.remainingSeconds);
 }
