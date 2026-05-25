@@ -574,6 +574,10 @@ button:focus-visible {
   gap: 6px;
 }
 
+.merge-down-icon {
+  transform: rotate(180deg);
+}
+
 .split-input {
   width: 178px;
 }

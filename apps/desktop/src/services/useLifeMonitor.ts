@@ -496,10 +496,32 @@ export function useLifeMonitor(): LifeMonitorController {
         updatedAt: new Date().toISOString(),
         isEdited: true,
       };
+      const startMs = new Date(updated.startedAt).getTime();
+      const endMs = updated.endedAt === null ? null : new Date(updated.endedAt).getTime();
+
+      if (!Number.isFinite(startMs) || (endMs !== null && (!Number.isFinite(endMs) || endMs <= startMs))) {
+        setError("结束时间需要晚于开始时间。");
+        return;
+      }
+
+      if (updated.endedAt === null && activeSegment?.id !== updated.id) {
+        setError("只有进行中的记录可以没有结束时间。");
+        return;
+      }
 
       await persistAndRefresh(async (repo) => {
+        const overlapEnd = updated.endedAt ?? new Date().toISOString();
+        const overlappingSegments = await repo.listSegments(updated.startedAt, overlapEnd);
+        if (overlappingSegments.some((item) => item.id !== updated.id)) {
+          throw new Error("调整后的时间和已有记录重叠，请先调整相邻记录。");
+        }
+
         await repo.updateSegment(updated);
-        if (activeSegment?.id === updated.id) setActiveSegment(updated);
+        if (activeSegment?.id === updated.id) {
+          setActiveSegment(updated);
+          setState(updated.state);
+          setTaskDraft(updated.taskName ?? "");
+        }
       });
     },
     [activeSegment, persistAndRefresh],

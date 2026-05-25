@@ -97,10 +97,11 @@ function App() {
     void syncWindowMode(windowMode);
   }, [windowMode]);
 
-  const orderedSegments = useMemo(
+  const chronologicalSegments = useMemo(
     () => [...monitor.segments].sort((left, right) => left.startedAt.localeCompare(right.startedAt)),
     [monitor.segments],
   );
+  const timelineSegments = useMemo(() => [...chronologicalSegments].reverse(), [chronologicalSegments]);
   const selectedDateLabel = useMemo(
     () => formatDateLabel(monitor.selectedDate, monitor.isViewingToday),
     [monitor.isViewingToday, monitor.selectedDate],
@@ -224,7 +225,12 @@ function App() {
       <div className="page-content">
         {activePage === "today" && <TodayPage monitor={monitor} />}
         {activePage === "timeline" && (
-          <TimelinePage monitor={monitor} orderedSegments={orderedSegments} selectedDateLabel={selectedDateLabel} />
+          <TimelinePage
+            monitor={monitor}
+            chronologicalSegments={chronologicalSegments}
+            timelineSegments={timelineSegments}
+            selectedDateLabel={selectedDateLabel}
+          />
         )}
         {activePage === "stats" && <StatsPage monitor={monitor} selectedDateLabel={selectedDateLabel} />}
         {activePage === "settings" && (
@@ -416,13 +422,24 @@ function FocusPanel({ monitor }: { monitor: MonitorController }) {
 
 function TimelinePage({
   monitor,
-  orderedSegments,
+  chronologicalSegments,
+  timelineSegments,
   selectedDateLabel,
 }: {
   monitor: MonitorController;
-  orderedSegments: TimelineSegment[];
+  chronologicalSegments: TimelineSegment[];
+  timelineSegments: TimelineSegment[];
   selectedDateLabel: string;
 }) {
+  const previousSegmentById = useMemo(() => {
+    return new Map(
+      chronologicalSegments.map((segment, index) => [
+        segment.id,
+        index > 0 ? chronologicalSegments[index - 1] : null,
+      ]),
+    );
+  }, [chronologicalSegments]);
+
   return (
     <section className="timeline-section">
       <div className="section-head">
@@ -437,14 +454,14 @@ function TimelinePage({
       </div>
       <BackfillPanel monitor={monitor} />
       <div className="timeline">
-        {orderedSegments.length === 0 ? (
+        {timelineSegments.length === 0 ? (
           <p className="empty-text">这一天还没有记录。切换日期可以查看其他自然日的时间线。</p>
         ) : (
-          orderedSegments.map((segment, index) => (
+          timelineSegments.map((segment) => (
             <TimelineRow
               key={segment.id}
               segment={segment}
-              previous={index > 0 ? orderedSegments[index - 1] : null}
+              previous={previousSegmentById.get(segment.id) ?? null}
               isActive={segment.id === monitor.activeSegment?.id}
               onUpdate={monitor.updateSegment}
               onSplit={monitor.splitSegment}
@@ -954,13 +971,18 @@ function TimelineRow({
     setSplitAt(midpointInputValue(segment));
   }, [segment]);
 
-  const save = async () => {
-    await onUpdate({
-      ...draft,
-      startedAt: fromLocalInputValue(toLocalInputValue(draft.startedAt)),
-      endedAt: draft.endedAt ? fromLocalInputValue(toLocalInputValue(draft.endedAt)) : null,
-    });
-  };
+  useEffect(() => {
+    const normalizedDraft = normalizeTimelineDraft(draft);
+    if (!normalizedDraft) return;
+    if (!hasTimelineDraftChanges(normalizedDraft, segment)) return;
+    if (!isPersistableTimelineDraft(normalizedDraft, isActive)) return;
+
+    const timeout = window.setTimeout(() => {
+      void onUpdate(normalizedDraft);
+    }, 350);
+
+    return () => window.clearTimeout(timeout);
+  }, [draft, isActive, onUpdate, segment]);
 
   return (
     <article className={`timeline-row ${segment.state} ${isActive ? "active" : ""}`}>
@@ -981,20 +1003,20 @@ function TimelineRow({
         <input
           type="datetime-local"
           value={toLocalInputValue(draft.startedAt)}
-          onChange={(event) =>
-            setDraft((current) => ({ ...current, startedAt: fromLocalInputValue(event.target.value) }))
-          }
+          onChange={(event) => {
+            const startedAt = maybeFromLocalInputValue(event.target.value);
+            if (!startedAt) return;
+            setDraft((current) => ({ ...current, startedAt }));
+          }}
         />
         <input
           type="datetime-local"
           disabled={isActive}
           value={draft.endedAt ? toLocalInputValue(draft.endedAt) : ""}
-          onChange={(event) =>
-            setDraft((current) => ({
-              ...current,
-              endedAt: event.target.value ? fromLocalInputValue(event.target.value) : null,
-            }))
-          }
+          onChange={(event) => {
+            const endedAt = event.target.value ? maybeFromLocalInputValue(event.target.value) : null;
+            setDraft((current) => ({ ...current, endedAt }));
+          }}
         />
       </div>
       <div className="timeline-meta">
@@ -1003,9 +1025,6 @@ function TimelineRow({
         {isActive && <span className="live-tag">进行中</span>}
       </div>
       <div className="row-actions">
-        <button type="button" className="icon-only" onClick={() => void save()} title="保存这一段">
-          <Save aria-hidden="true" />
-        </button>
         <input
           className="split-input"
           type="datetime-local"
@@ -1026,9 +1045,9 @@ function TimelineRow({
           className="icon-only"
           disabled={!canMerge}
           onClick={() => void onMerge(segment)}
-          title="与上一段合并"
+          title="与下方一段合并"
         >
-          <Merge aria-hidden="true" />
+          <Merge className="merge-down-icon" aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -1128,8 +1147,45 @@ function toLocalInputValue(isoDate: string): string {
   return local.toISOString().slice(0, 16);
 }
 
+function maybeFromLocalInputValue(value: string): string | null {
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
+}
+
 function fromLocalInputValue(value: string): string {
-  return new Date(value).toISOString();
+  const isoDate = maybeFromLocalInputValue(value);
+  if (!isoDate) throw new Error("Invalid local date input.");
+  return isoDate;
+}
+
+function normalizeTimelineDraft(segment: TimelineSegment): TimelineSegment | null {
+  const startedAt = maybeFromLocalInputValue(toLocalInputValue(segment.startedAt));
+  const endedAt = segment.endedAt ? maybeFromLocalInputValue(toLocalInputValue(segment.endedAt)) : null;
+  if (!startedAt || (segment.endedAt && !endedAt)) return null;
+
+  return {
+    ...segment,
+    startedAt,
+    endedAt,
+  };
+}
+
+function hasTimelineDraftChanges(draft: TimelineSegment, segment: TimelineSegment): boolean {
+  return (
+    draft.state !== segment.state ||
+    draft.taskName !== segment.taskName ||
+    draft.startedAt !== segment.startedAt ||
+    draft.endedAt !== segment.endedAt
+  );
+}
+
+function isPersistableTimelineDraft(segment: TimelineSegment, isActive: boolean): boolean {
+  const startMs = new Date(segment.startedAt).getTime();
+  if (!Number.isFinite(startMs)) return false;
+  if (segment.endedAt === null) return isActive;
+
+  const endMs = new Date(segment.endedAt).getTime();
+  return Number.isFinite(endMs) && endMs > startMs;
 }
 
 function toDateInputValue(date: Date): string {
