@@ -11,6 +11,7 @@ import {
 export interface LifeRepository {
   loadSettings(): Promise<LifeSettings>;
   saveSettings(settings: LifeSettings): Promise<void>;
+  getLatestTaskName(state: TrackableState): Promise<string | null>;
   exportData(): Promise<LifeDataExport>;
   replaceData(data: LifeDataExport): Promise<void>;
   listSegments(startIso: string, endIso: string): Promise<TimelineSegment[]>;
@@ -63,6 +64,14 @@ class LocalStorageRepository implements LifeRepository {
     const data = this.read();
     data.settings = settings;
     this.write(data);
+  }
+
+  async getLatestTaskName(state: TrackableState): Promise<string | null> {
+    const latest = [...this.read().segments]
+      .filter((segment) => segment.state === state && normalizeTaskName(segment.taskName))
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt))[0];
+
+    return normalizeTaskName(latest?.taskName);
   }
 
   async exportData(): Promise<LifeDataExport> {
@@ -173,6 +182,15 @@ class TauriSqlRepository implements LifeRepository {
       "INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
       ["main", JSON.stringify(settings), new Date().toISOString()],
     );
+  }
+
+  async getLatestTaskName(state: TrackableState): Promise<string | null> {
+    const rows = await this.db.select<Array<{ task_name: string }>>(
+      "SELECT task_name FROM timeline_segments WHERE state = $1 AND task_name IS NOT NULL AND TRIM(task_name) <> '' ORDER BY started_at DESC LIMIT 1",
+      [state],
+    );
+
+    return normalizeTaskName(rows[0]?.task_name);
   }
 
   async exportData(): Promise<LifeDataExport> {

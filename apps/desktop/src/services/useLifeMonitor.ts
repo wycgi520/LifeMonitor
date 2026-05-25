@@ -1,5 +1,6 @@
 import {
   DEFAULT_SETTINGS,
+  addMinutes,
   calculateTodayStats,
   canMergeSegments,
   closeSegment,
@@ -7,6 +8,7 @@ import {
   createSegment,
   deriveTimerSnapshot,
   extendDueAt,
+  getTargetMinutes,
   getLocalDayRange,
   normalizeTaskName,
   splitSegmentAt,
@@ -96,10 +98,15 @@ export function useLifeMonitor(): LifeMonitorController {
   const initialized = useRef(false);
   const lastTodayKey = useRef(toLocalDateKey(new Date()));
   const settlingRunIds = useRef<Set<string>>(new Set());
+  const settingsRef = useRef<LifeSettings>(DEFAULT_SETTINGS);
 
   const selectedDayRange = useMemo(() => getDayRangeForDateKey(selectedDate), [selectedDate]);
   const todayKey = useMemo(() => toLocalDateKey(new Date(nowIso)), [nowIso]);
   const isViewingToday = selectedDate === todayKey;
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
 
   const setSelectedDate = useCallback((value: string) => {
     if (!isLocalDateKey(value)) return;
@@ -137,6 +144,7 @@ export function useLifeMonitor(): LifeMonitorController {
         const openSegment = await nextRepository.getOpenSegment();
 
         setRepository(nextRepository);
+        settingsRef.current = nextSettings;
         setSettings(nextSettings);
         setActiveSegment(openSegment);
         setState(openSegment?.state ?? "idle");
@@ -198,6 +206,7 @@ export function useLifeMonitor(): LifeMonitorController {
 
     const saveCloseBehavior = async (nextSettings: LifeSettings) => {
       await repository.saveSettings(nextSettings);
+      settingsRef.current = nextSettings;
       setSettings(nextSettings);
     };
 
@@ -321,16 +330,17 @@ export function useLifeMonitor(): LifeMonitorController {
   const switchToState = useCallback(
     async (nextState: TrackableState, taskName?: string | null) => {
       const now = new Date().toISOString();
-      const normalizedTask = normalizeTaskName(taskName ?? taskDraft);
       const isContinuingState = activeSegment?.state === nextState;
 
       await persistAndRefresh(async (repo) => {
         await closeCurrent(repo, now);
+        const normalizedTask =
+          normalizeTaskName(taskName ?? taskDraft) ?? (await repo.getLatestTaskName(nextState));
         const nextSegment = createSegment({
           state: nextState,
           taskName: normalizedTask,
           nowIso: now,
-          settings,
+          settings: settingsRef.current,
           stateRunId: isContinuingState ? activeSegment.stateRunId : undefined,
           plannedEndAt: isContinuingState ? activeSegment.plannedEndAt : undefined,
         });
@@ -342,7 +352,7 @@ export function useLifeMonitor(): LifeMonitorController {
         setTimeoutNotice(null);
       });
     },
-    [activeSegment, closeCurrent, persistAndRefresh, settings, taskDraft],
+    [activeSegment, closeCurrent, persistAndRefresh, taskDraft],
   );
 
   const startBusy = useCallback(
@@ -388,7 +398,7 @@ export function useLifeMonitor(): LifeMonitorController {
         state: pausedContext.state,
         taskName: pausedContext.taskName,
         nowIso: now,
-        settings,
+        settings: settingsRef.current,
         stateRunId: pausedContext.stateRunId,
         plannedEndAt,
       });
@@ -399,7 +409,7 @@ export function useLifeMonitor(): LifeMonitorController {
       setPausedContext(null);
       setTimeoutNotice(null);
     });
-  }, [pausedContext, persistAndRefresh, settings, switchToState, taskDraft]);
+  }, [pausedContext, persistAndRefresh, switchToState, taskDraft]);
 
   const changeTask = useCallback(
     async (taskName: string | null) => {
@@ -414,7 +424,7 @@ export function useLifeMonitor(): LifeMonitorController {
           state: activeSegment.state,
           taskName: normalizedTask,
           nowIso: now,
-          settings,
+          settings: settingsRef.current,
           stateRunId: activeSegment.stateRunId,
           plannedEndAt: activeSegment.plannedEndAt,
         });
@@ -422,7 +432,7 @@ export function useLifeMonitor(): LifeMonitorController {
         setActiveSegment(nextSegment);
       });
     },
-    [activeSegment, closeCurrent, persistAndRefresh, settings],
+    [activeSegment, closeCurrent, persistAndRefresh],
   );
 
   const extend = useCallback(
@@ -454,12 +464,39 @@ export function useLifeMonitor(): LifeMonitorController {
   const saveSettings = useCallback(
     async (nextSettings: LifeSettings) => {
       await persistAndRefresh(async (repo) => {
+        const previousSettings = settingsRef.current;
+        const activeRunExtensionMinutes = activeSegment
+          ? getRunExtensionMinutes(
+              activeSegment,
+              segments,
+              previousSettings,
+              extensionMinutesByRun[activeSegment.stateRunId] ?? 0,
+            )
+          : 0;
+
         await repo.saveSettings(nextSettings);
+        settingsRef.current = nextSettings;
         setSettings(nextSettings);
+        if (activeSegment) {
+          const updatedAt = new Date().toISOString();
+          const plannedEndAt = getRunPlannedEndAt(
+            activeSegment,
+            segments,
+            nextSettings,
+            activeRunExtensionMinutes,
+          );
+
+          await repo.updateRunPlannedEnd(activeSegment.stateRunId, plannedEndAt, updatedAt);
+          setActiveSegment({
+            ...activeSegment,
+            plannedEndAt,
+            updatedAt,
+          });
+        }
         await syncPlatformSettings(nextSettings);
       });
     },
-    [persistAndRefresh],
+    [activeSegment, extensionMinutesByRun, persistAndRefresh, segments],
   );
 
   const addManualSegment = useCallback(
@@ -469,7 +506,7 @@ export function useLifeMonitor(): LifeMonitorController {
       try {
         const segment = createManualSegment({
           ...input,
-          settings,
+          settings: settingsRef.current,
         });
         const overlappingSegments = await repository.listSegments(segment.startedAt, input.endedAt);
         if (overlappingSegments.length > 0) {
@@ -485,7 +522,7 @@ export function useLifeMonitor(): LifeMonitorController {
         return false;
       }
     },
-    [repository, selectedDayRange.endIso, selectedDayRange.startIso, settings],
+    [repository, selectedDayRange.endIso, selectedDayRange.startIso],
   );
 
   const updateSegment = useCallback(
@@ -596,6 +633,7 @@ export function useLifeMonitor(): LifeMonitorController {
         const nextSettings = await repository.loadSettings();
         const openSegment = await repository.getOpenSegment();
 
+        settingsRef.current = nextSettings;
         setSettings(nextSettings);
         setActiveSegment(openSegment);
         setState(openSegment?.state ?? "idle");
@@ -678,4 +716,38 @@ function shiftLocalDateKey(value: string, days: number): string {
   const date = dateFromLocalDateKey(value);
   date.setDate(date.getDate() + days);
   return toLocalDateKey(date);
+}
+
+function getRunPlannedEndAt(
+  activeSegment: TimelineSegment,
+  segments: TimelineSegment[],
+  settings: LifeSettings,
+  extensionMinutes: number,
+): string {
+  const runStartedAt = getRunStartedAt(activeSegment, segments);
+  return addMinutes(runStartedAt, getTargetMinutes(activeSegment.state, settings) + extensionMinutes);
+}
+
+function getRunStartedAt(activeSegment: TimelineSegment, segments: TimelineSegment[]): string {
+  return [...segments, activeSegment]
+    .filter((segment) => segment.stateRunId === activeSegment.stateRunId)
+    .reduce(
+      (earliest, segment) => (segment.startedAt < earliest ? segment.startedAt : earliest),
+      activeSegment.startedAt,
+    );
+}
+
+function getRunExtensionMinutes(
+  activeSegment: TimelineSegment,
+  segments: TimelineSegment[],
+  settings: LifeSettings,
+  trackedExtensionMinutes: number,
+): number {
+  const runStartedAt = getRunStartedAt(activeSegment, segments);
+  const baseEnd = addMinutes(runStartedAt, getTargetMinutes(activeSegment.state, settings));
+  const persistedExtensionMinutes = Math.round(
+    (new Date(activeSegment.plannedEndAt).getTime() - new Date(baseEnd).getTime()) / 60_000,
+  );
+
+  return Math.max(0, trackedExtensionMinutes, persistedExtensionMinutes);
 }
