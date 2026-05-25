@@ -8,6 +8,7 @@ import {
   Check,
   Clock3,
   Coffee,
+  Download,
   Grip,
   ListTree,
   Maximize2,
@@ -16,14 +17,16 @@ import {
   Pause,
   Pin,
   Play,
+  Plus,
   RefreshCw,
   Save,
   Scissors,
   Settings2,
   Trash2,
+  Upload,
   Volume2,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type MouseEvent, type RefObject } from "react";
 import {
   DEFAULT_SETTINGS,
   UNMARKED_TASK,
@@ -35,6 +38,7 @@ import {
   type TrackableState,
 } from "@lifemonitor/core";
 import "./App.css";
+import { isTauriRuntime } from "./services/repository";
 import { useLifeMonitor } from "./services/useLifeMonitor";
 import {
   registerMiniWindowPositionTracking,
@@ -80,6 +84,8 @@ function App() {
   const [settingsDraft, setSettingsDraft] = useState<LifeSettings>(DEFAULT_SETTINGS);
   const [windowMode, setWindowMode] = useState<AppWindowMode>(() => readWindowMode());
   const [activePage, setActivePage] = useState<PageId>("today");
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [dataTransferMessage, setDataTransferMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setSettingsDraft(monitor.settings);
@@ -117,6 +123,36 @@ function App() {
     if (page === "today") monitor.goToToday();
   };
 
+  const exportRecords = async () => {
+    try {
+      const data = await monitor.exportData();
+      const fileName = `lifemonitor-${toDateInputValue(new Date())}.json`;
+      const exportLocation = await saveJsonExport(data, fileName);
+      setDataTransferMessage(`已导出 ${data.segments.length} 条记录到：${exportLocation}`);
+    } catch (caught) {
+      setDataTransferMessage(caught instanceof Error ? caught.message : String(caught));
+    }
+  };
+
+  const requestImportRecords = () => {
+    importInputRef.current?.click();
+  };
+
+  const importRecords = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    if (!window.confirm("导入会覆盖本机现有记录和设置，确定继续吗？")) return;
+
+    try {
+      const data = await monitor.importData(await file.text());
+      setDataTransferMessage(`已导入 ${data.segments.length} 条记录。`);
+      setActivePage("timeline");
+    } catch (caught) {
+      setDataTransferMessage(caught instanceof Error ? caught.message : String(caught));
+    }
+  };
+
   if (monitor.loading) {
     return (
       <main className="app-shell loading-shell">
@@ -132,7 +168,14 @@ function App() {
 
   return (
     <main className="app-shell">
-      {monitor.reminderVisible && <ReminderBanner monitor={monitor} />}
+      {monitor.timeoutNotice && (
+        <TimeoutNoticeBanner
+          monitor={monitor}
+          onOpenTimeline={() => {
+            setActivePage("timeline");
+          }}
+        />
+      )}
 
       <header className="topbar">
         <div>
@@ -146,7 +189,7 @@ function App() {
           </button>
           <div className={`status-pill ${statusTone}`}>
             <BellRing aria-hidden="true" />
-            <span>{stateLabels[monitor.state]}</span>
+            <span>{getStatusLabel(monitor)}</span>
           </div>
         </div>
       </header>
@@ -183,6 +226,11 @@ function App() {
             settingsDraft={settingsDraft}
             setSettingsDraft={setSettingsDraft}
             onSubmit={saveSettings}
+            onExportData={() => void exportRecords()}
+            onRequestImport={requestImportRecords}
+            importInputRef={importInputRef}
+            onImportFile={(event) => void importRecords(event)}
+            dataTransferMessage={dataTransferMessage}
           />
         )}
       </div>
@@ -190,45 +238,32 @@ function App() {
   );
 }
 
-function ReminderBanner({ monitor }: { monitor: MonitorController }) {
+function TimeoutNoticeBanner({
+  monitor,
+  onOpenTimeline,
+}: {
+  monitor: MonitorController;
+  onOpenTimeline: () => void;
+}) {
+  const notice = monitor.timeoutNotice;
+  if (!notice) return null;
+
   return (
-    <section className="reminder" aria-live="assertive">
+    <section className="reminder" aria-live="polite">
       <div>
         <p className="eyebrow">到点提醒</p>
-        <h2>{monitor.state === "busy" ? "该休息一下了" : "休息时间到了"}</h2>
-        <p>
-          当前{stateLabels[monitor.state]}已持续 {formatDuration(monitor.snapshot.elapsedSeconds)}，超时{" "}
-          {formatDuration(monitor.snapshot.overtimeSeconds)}。
-        </p>
-        <p className="muted">当前任务：{monitor.snapshot.taskName ?? UNMARKED_TASK}</p>
+        <h2>已自动回到空闲</h2>
+        <p>{trackableStateLabels[notice.state]}已在 {formatDateTimeLabel(notice.endedAt)} 结束。</p>
+        <p className="muted">上一段：{notice.taskName ?? UNMARKED_TASK}</p>
       </div>
       <div className="reminder-actions">
-        <button type="button" className="icon-button" onClick={() => void monitor.extend(5)} title="延长 5 分钟">
-          <Clock3 aria-hidden="true" />
-          <span>5 分钟</span>
+        <button type="button" className="icon-button primary" onClick={onOpenTimeline} title="打开时间线补记">
+          <ListTree aria-hidden="true" />
+          <span>补记/调整</span>
         </button>
-        <button type="button" className="icon-button" onClick={() => void monitor.extend(10)} title="延长 10 分钟">
-          <Clock3 aria-hidden="true" />
-          <span>10 分钟</span>
-        </button>
-        {monitor.state === "busy" ? (
-          <button type="button" className="icon-button primary" onClick={() => void monitor.startRest()} title="开始休息">
-            <Coffee aria-hidden="true" />
-            <span>开始休息</span>
-          </button>
-        ) : (
-          <button type="button" className="icon-button primary" onClick={() => void monitor.startBusy()} title="继续忙碌">
-            <BriefcaseBusiness aria-hidden="true" />
-            <span>继续忙碌</span>
-          </button>
-        )}
-        <button type="button" className="icon-button" onClick={monitor.acknowledgeReminder} title="继续当前状态">
+        <button type="button" className="icon-button" onClick={monitor.dismissTimeoutNotice} title="收起提醒">
           <Check aria-hidden="true" />
-          <span>继续</span>
-        </button>
-        <button type="button" className="icon-button" onClick={() => void monitor.pause()} title="暂停记录">
-          <Pause aria-hidden="true" />
-          <span>暂停</span>
+          <span>知道了</span>
         </button>
       </div>
     </section>
@@ -297,6 +332,7 @@ function TodayPage({ monitor }: { monitor: MonitorController }) {
 
 function FocusPanel({ monitor }: { monitor: MonitorController }) {
   const canExtend = monitor.state === "busy" || monitor.state === "rest";
+  const timerStatusText = getFocusTimerStatus(monitor);
 
   return (
     <section className="focus-panel">
@@ -305,12 +341,8 @@ function FocusPanel({ monitor }: { monitor: MonitorController }) {
           <p className="eyebrow">当前状态</p>
           <h2>{stateLabels[monitor.state]}</h2>
         </div>
-        <div className="due-text">
-          {monitor.state === "idle" || monitor.state === "paused"
-            ? "未计时"
-            : monitor.snapshot.isDue
-              ? `超时 ${formatDuration(monitor.snapshot.overtimeSeconds)}`
-              : `剩余 ${formatDuration(monitor.snapshot.remainingSeconds)}`}
+        <div className={`due-text ${monitor.snapshot.isDue ? "is-soft-overdue" : ""}`}>
+          {timerStatusText}
         </div>
       </div>
 
@@ -396,6 +428,7 @@ function TimelinePage({
           <span>刷新</span>
         </button>
       </div>
+      <BackfillPanel monitor={monitor} />
       <div className="timeline">
         {orderedSegments.length === 0 ? (
           <p className="empty-text">这一天还没有记录。切换日期可以查看其他自然日的时间线。</p>
@@ -415,6 +448,91 @@ function TimelinePage({
         )}
       </div>
     </section>
+  );
+}
+
+interface BackfillDraft {
+  state: TrackableState;
+  taskName: string;
+  startedAt: string;
+  endedAt: string;
+}
+
+function BackfillPanel({ monitor }: { monitor: MonitorController }) {
+  const [draft, setDraft] = useState<BackfillDraft>(() => createDefaultBackfillDraft(monitor.selectedDate));
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDraft(createDefaultBackfillDraft(monitor.selectedDate));
+    setMessage(null);
+  }, [monitor.selectedDate]);
+
+  const submitBackfill = async (event: FormEvent) => {
+    event.preventDefault();
+    const startMs = new Date(draft.startedAt).getTime();
+    const endMs = new Date(draft.endedAt).getTime();
+
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      setMessage("结束时间需要晚于开始时间。");
+      return;
+    }
+
+    const added = await monitor.addManualSegment({
+      state: draft.state,
+      taskName: draft.taskName,
+      startedAt: new Date(startMs).toISOString(),
+      endedAt: new Date(endMs).toISOString(),
+    });
+    if (!added) return;
+
+    setMessage("已添加补记。");
+    setDraft((current) => advanceBackfillDraft(current));
+  };
+
+  return (
+    <form className="backfill-form" onSubmit={submitBackfill}>
+      <label>
+        类型
+        <select
+          value={draft.state}
+          onChange={(event) =>
+            setDraft((current) => ({ ...current, state: event.target.value as TrackableState }))
+          }
+        >
+          <option value="busy">忙碌</option>
+          <option value="rest">休息</option>
+        </select>
+      </label>
+      <label className="backfill-task">
+        内容
+        <input
+          value={draft.taskName}
+          placeholder={draft.state === "busy" ? "补记任务" : "休息内容"}
+          onChange={(event) => setDraft((current) => ({ ...current, taskName: event.target.value }))}
+        />
+      </label>
+      <label>
+        开始
+        <input
+          type="datetime-local"
+          value={draft.startedAt}
+          onChange={(event) => setDraft((current) => ({ ...current, startedAt: event.target.value }))}
+        />
+      </label>
+      <label>
+        结束
+        <input
+          type="datetime-local"
+          value={draft.endedAt}
+          onChange={(event) => setDraft((current) => ({ ...current, endedAt: event.target.value }))}
+        />
+      </label>
+      <button type="submit" className="icon-button primary">
+        <Plus aria-hidden="true" />
+        <span>添加补记</span>
+      </button>
+      {message && <p className="inline-message">{message}</p>}
+    </form>
   );
 }
 
@@ -473,10 +591,20 @@ function SettingsPage({
   settingsDraft,
   setSettingsDraft,
   onSubmit,
+  onExportData,
+  onRequestImport,
+  importInputRef,
+  onImportFile,
+  dataTransferMessage,
 }: {
   settingsDraft: LifeSettings;
   setSettingsDraft: (updater: (current: LifeSettings) => LifeSettings) => void;
   onSubmit: (event: FormEvent) => void;
+  onExportData: () => void;
+  onRequestImport: () => void;
+  importInputRef: RefObject<HTMLInputElement | null>;
+  onImportFile: (event: ChangeEvent<HTMLInputElement>) => void;
+  dataTransferMessage: string | null;
 }) {
   return (
     <section className="settings-section">
@@ -577,6 +705,31 @@ function SettingsPage({
           <span>保存设置</span>
         </button>
       </form>
+      <div className="settings-divider" />
+      <div className="data-portability">
+        <div>
+          <p className="eyebrow">记录迁移</p>
+          <h2>导入导出</h2>
+        </div>
+        <div className="data-actions">
+          <button type="button" className="icon-button" onClick={onExportData}>
+            <Download aria-hidden="true" />
+            <span>导出记录</span>
+          </button>
+          <button type="button" className="icon-button" onClick={onRequestImport}>
+            <Upload aria-hidden="true" />
+            <span>导入记录</span>
+          </button>
+          <input
+            ref={importInputRef}
+            className="sr-only"
+            type="file"
+            accept="application/json,.json"
+            onChange={onImportFile}
+          />
+        </div>
+        {dataTransferMessage && <p className="inline-message">{dataTransferMessage}</p>}
+      </div>
     </section>
   );
 }
@@ -884,6 +1037,73 @@ function TimelineRow({
   );
 }
 
+function createDefaultBackfillDraft(selectedDate: string): BackfillDraft {
+  const [year, month, day] = selectedDate.split("-").map(Number);
+  const dayStart = new Date(year, month - 1, day, 0, 0, 0, 0);
+  const dayEnd = new Date(year, month - 1, day, 23, 59, 0, 0);
+  const now = new Date();
+  now.setSeconds(0, 0);
+
+  let end = selectedDate === toDateInputValue(now) ? now : new Date(year, month - 1, day, 10, 0, 0, 0);
+  if (end.getTime() <= dayStart.getTime()) end = new Date(dayStart.getTime() + 30 * 60_000);
+  if (end.getTime() > dayEnd.getTime()) end = dayEnd;
+
+  let start = new Date(end.getTime() - 30 * 60_000);
+  if (start.getTime() < dayStart.getTime()) start = dayStart;
+
+  return {
+    state: "busy",
+    taskName: "",
+    startedAt: toLocalInputValue(start.toISOString()),
+    endedAt: toLocalInputValue(end.toISOString()),
+  };
+}
+
+function advanceBackfillDraft(current: BackfillDraft): BackfillDraft {
+  const startMs = new Date(current.endedAt).getTime();
+  if (!Number.isFinite(startMs)) return current;
+
+  return {
+    ...current,
+    taskName: "",
+    startedAt: toLocalInputValue(new Date(startMs).toISOString()),
+    endedAt: toLocalInputValue(new Date(startMs + 30 * 60_000).toISOString()),
+  };
+}
+
+function formatDateTimeLabel(isoDate: string): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(isoDate));
+}
+
+async function saveJsonExport(data: unknown, fileName: string): Promise<string> {
+  const content = JSON.stringify(data, null, 2);
+
+  if (isTauriRuntime()) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke<string>("export_json_file", { fileName, content });
+  }
+
+  downloadJson(content, fileName);
+  return `浏览器默认下载目录（通常是“下载”文件夹）/${fileName}`;
+}
+
+function downloadJson(content: string, fileName: string): void {
+  const blob = new Blob([content], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 function durationFor(segment: TimelineSegment): number {
   const end = segment.endedAt ?? new Date().toISOString();
   return Math.max(0, Math.round((new Date(end).getTime() - new Date(segment.startedAt).getTime()) / 1000));
@@ -938,12 +1158,24 @@ function percentage(value: number, total: number): number {
 function getTimerLabel(monitor: MonitorController): string {
   if (monitor.state === "idle") return "未计时";
   if (monitor.state === "paused") return "已暂停";
-  return monitor.snapshot.isDue ? "超时" : "剩余";
+  return monitor.snapshot.isDue ? "多用" : "剩余";
 }
 
 function getTimerValue(monitor: MonitorController): string {
   if (monitor.state === "idle" || monitor.state === "paused") return "0秒";
-  return formatDuration(monitor.snapshot.isDue ? monitor.snapshot.overtimeSeconds : monitor.snapshot.remainingSeconds);
+  return monitor.snapshot.isDue
+    ? formatDuration(monitor.snapshot.overtimeSeconds)
+    : formatDuration(monitor.snapshot.remainingSeconds);
+}
+
+function getFocusTimerStatus(monitor: MonitorController): string {
+  if (monitor.state === "idle" || monitor.state === "paused") return "未计时";
+  if (monitor.snapshot.isDue) return `多用 ${formatDuration(monitor.snapshot.overtimeSeconds)}`;
+  return `剩余 ${formatDuration(monitor.snapshot.remainingSeconds)}`;
+}
+
+function getStatusLabel(monitor: MonitorController): string {
+  return monitor.snapshot.isDue ? `多用 ${formatDuration(monitor.snapshot.overtimeSeconds)}` : stateLabels[monitor.state];
 }
 
 function readWindowMode(): AppWindowMode {

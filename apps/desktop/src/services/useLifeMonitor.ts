@@ -3,6 +3,7 @@ import {
   calculateTodayStats,
   canMergeSegments,
   closeSegment,
+  createManualSegment,
   createSegment,
   deriveTimerSnapshot,
   extendDueAt,
@@ -18,13 +19,27 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { showReminderNotification } from "./notifications";
 import { registerWindowCloseBehavior, syncPlatformSettings } from "./platform";
-import { createRepository, type LifeRepository } from "./repository";
+import { createRepository, parseLifeDataExport, type LifeDataExport, type LifeRepository } from "./repository";
 
 interface PausedContext {
   state: TrackableState;
   taskName: string | null;
   stateRunId: string;
   remainingMs: number;
+}
+
+interface ManualSegmentInput {
+  state: TrackableState;
+  taskName: string | null;
+  startedAt: string;
+  endedAt: string;
+}
+
+interface TimeoutNotice {
+  state: TrackableState;
+  taskName: string | null;
+  endedAt: string;
+  runId: string;
 }
 
 export interface LifeMonitorController {
@@ -44,19 +59,22 @@ export interface LifeMonitorController {
   activeSegment: TimelineSegment | null;
   stats: TodayStats;
   snapshot: ReturnType<typeof deriveTimerSnapshot>;
-  reminderVisible: boolean;
+  timeoutNotice: TimeoutNotice | null;
   startBusy: (taskName?: string | null) => Promise<void>;
   startRest: (taskName?: string | null) => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   changeTask: (taskName: string | null) => Promise<void>;
   extend: (minutes: number) => Promise<void>;
-  acknowledgeReminder: () => void;
+  dismissTimeoutNotice: () => void;
   saveSettings: (settings: LifeSettings) => Promise<void>;
+  addManualSegment: (input: ManualSegmentInput) => Promise<boolean>;
   updateSegment: (segment: TimelineSegment) => Promise<void>;
   splitSegment: (segment: TimelineSegment, splitAtIso: string) => Promise<void>;
   mergeWithPrevious: (segment: TimelineSegment) => Promise<void>;
   deleteSegment: (segment: TimelineSegment) => Promise<void>;
+  exportData: () => Promise<LifeDataExport>;
+  importData: (raw: string) => Promise<LifeDataExport>;
   refresh: () => Promise<void>;
 }
 
@@ -69,7 +87,7 @@ export function useLifeMonitor(): LifeMonitorController {
   const [segments, setSegments] = useState<TimelineSegment[]>([]);
   const [activeSegment, setActiveSegment] = useState<TimelineSegment | null>(null);
   const [pausedContext, setPausedContext] = useState<PausedContext | null>(null);
-  const [acknowledgedRunIds, setAcknowledgedRunIds] = useState<Set<string>>(() => new Set());
+  const [timeoutNotice, setTimeoutNotice] = useState<TimeoutNotice | null>(null);
   const [notifiedRunIds, setNotifiedRunIds] = useState<Set<string>>(() => new Set());
   const [extensionMinutesByRun, setExtensionMinutesByRun] = useState<Record<string, number>>({});
   const [nowIso, setNowIso] = useState(() => new Date().toISOString());
@@ -77,6 +95,7 @@ export function useLifeMonitor(): LifeMonitorController {
   const [error, setError] = useState<string | null>(null);
   const initialized = useRef(false);
   const lastTodayKey = useRef(toLocalDateKey(new Date()));
+  const settlingRunIds = useRef<Set<string>>(new Set());
 
   const selectedDayRange = useMemo(() => getDayRangeForDateKey(selectedDate), [selectedDate]);
   const todayKey = useMemo(() => toLocalDateKey(new Date(nowIso)), [nowIso]);
@@ -231,17 +250,6 @@ export function useLifeMonitor(): LifeMonitorController {
     [activeSegment, extensionMinutesByRun, nowIso, settings, snapshotSegment, state],
   );
 
-  const reminderVisible = Boolean(
-    activeSegment && snapshot.isDue && !acknowledgedRunIds.has(activeSegment.stateRunId),
-  );
-
-  useEffect(() => {
-    if (!reminderVisible || !activeSegment || notifiedRunIds.has(activeSegment.stateRunId)) return;
-
-    setNotifiedRunIds((previous) => new Set(previous).add(activeSegment.stateRunId));
-    void showReminderNotification(snapshot, settings);
-  }, [activeSegment, notifiedRunIds, reminderVisible, settings, snapshot]);
-
   const persistAndRefresh = useCallback(
     async (operation: (repo: LifeRepository) => Promise<void>) => {
       if (!repository) return;
@@ -255,6 +263,50 @@ export function useLifeMonitor(): LifeMonitorController {
     },
     [repository, selectedDayRange.endIso, selectedDayRange.startIso],
   );
+
+  useEffect(() => {
+    if (!repository || !activeSegment || state === "idle" || state === "paused" || !snapshot.isDue) return;
+
+    const runId = activeSegment.stateRunId;
+    if (settlingRunIds.current.has(runId)) return;
+    settlingRunIds.current.add(runId);
+
+    const dueAt = activeSegment.plannedEndAt;
+    const dueSnapshot = snapshot;
+
+    void (async () => {
+      try {
+        if (!notifiedRunIds.has(runId)) {
+          setNotifiedRunIds((previous) => new Set(previous).add(runId));
+          void showReminderNotification(dueSnapshot, settings).catch((caught) => {
+            console.warn("Failed to show timeout notification.", caught);
+          });
+        }
+
+        await persistAndRefresh(async (repo) => {
+          const closed = closeSegment(activeSegment, dueAt);
+          await repo.updateSegment(closed);
+          setActiveSegment(null);
+          setState("idle");
+          setTaskDraft("");
+          setPausedContext(null);
+          setTimeoutNotice({
+            state: activeSegment.state,
+            taskName: activeSegment.taskName,
+            endedAt: dueAt,
+            runId,
+          });
+          setExtensionMinutesByRun((previous) => {
+            const next = { ...previous };
+            delete next[runId];
+            return next;
+          });
+        });
+      } finally {
+        settlingRunIds.current.delete(runId);
+      }
+    })();
+  }, [activeSegment, notifiedRunIds, persistAndRefresh, repository, settings, snapshot, state]);
 
   const closeCurrent = useCallback(
     async (repo: LifeRepository, endedAt: string) => {
@@ -287,6 +339,7 @@ export function useLifeMonitor(): LifeMonitorController {
         setState(nextState);
         setTaskDraft(nextSegment.taskName ?? "");
         setPausedContext(null);
+        setTimeoutNotice(null);
       });
     },
     [activeSegment, closeCurrent, persistAndRefresh, settings, taskDraft],
@@ -317,6 +370,7 @@ export function useLifeMonitor(): LifeMonitorController {
       });
       setActiveSegment(null);
       setState("paused");
+      setTimeoutNotice(null);
     });
   }, [activeSegment, closeCurrent, persistAndRefresh]);
 
@@ -343,6 +397,7 @@ export function useLifeMonitor(): LifeMonitorController {
       setState(pausedContext.state);
       setTaskDraft(nextSegment.taskName ?? "");
       setPausedContext(null);
+      setTimeoutNotice(null);
     });
   }, [pausedContext, persistAndRefresh, settings, switchToState, taskDraft]);
 
@@ -387,20 +442,14 @@ export function useLifeMonitor(): LifeMonitorController {
           ...previous,
           [activeSegment.stateRunId]: (previous[activeSegment.stateRunId] ?? 0) + minutes,
         }));
-        setAcknowledgedRunIds((previous) => {
-          const next = new Set(previous);
-          next.delete(activeSegment.stateRunId);
-          return next;
-        });
       });
     },
     [activeSegment, persistAndRefresh],
   );
 
-  const acknowledgeReminder = useCallback(() => {
-    if (!activeSegment) return;
-    setAcknowledgedRunIds((previous) => new Set(previous).add(activeSegment.stateRunId));
-  }, [activeSegment]);
+  const dismissTimeoutNotice = useCallback(() => {
+    setTimeoutNotice(null);
+  }, []);
 
   const saveSettings = useCallback(
     async (nextSettings: LifeSettings) => {
@@ -411,6 +460,32 @@ export function useLifeMonitor(): LifeMonitorController {
       });
     },
     [persistAndRefresh],
+  );
+
+  const addManualSegment = useCallback(
+    async (input: ManualSegmentInput): Promise<boolean> => {
+      if (!repository) return false;
+
+      try {
+        const segment = createManualSegment({
+          ...input,
+          settings,
+        });
+        const overlappingSegments = await repository.listSegments(segment.startedAt, input.endedAt);
+        if (overlappingSegments.length > 0) {
+          throw new Error("补记时间和已有记录重叠，请先调整现有记录。");
+        }
+
+        await repository.insertSegment(segment);
+        setSegments(await repository.listSegments(selectedDayRange.startIso, selectedDayRange.endIso));
+        setError(null);
+        return true;
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+        return false;
+      }
+    },
+    [repository, selectedDayRange.endIso, selectedDayRange.startIso, settings],
   );
 
   const updateSegment = useCallback(
@@ -476,6 +551,50 @@ export function useLifeMonitor(): LifeMonitorController {
     [activeSegment, persistAndRefresh],
   );
 
+  const exportData = useCallback(async (): Promise<LifeDataExport> => {
+    if (!repository) throw new Error("记录仓库还没有准备好。");
+
+    try {
+      const data = await repository.exportData();
+      setError(null);
+      return data;
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      throw caught;
+    }
+  }, [repository]);
+
+  const importData = useCallback(
+    async (raw: string): Promise<LifeDataExport> => {
+      if (!repository) throw new Error("记录仓库还没有准备好。");
+
+      try {
+        const data = parseLifeDataExport(raw);
+        await repository.replaceData(data);
+        const nextSettings = await repository.loadSettings();
+        const openSegment = await repository.getOpenSegment();
+
+        setSettings(nextSettings);
+        setActiveSegment(openSegment);
+        setState(openSegment?.state ?? "idle");
+        setTaskDraft(openSegment?.taskName ?? "");
+        setPausedContext(null);
+        setTimeoutNotice(null);
+        setNotifiedRunIds(new Set());
+        setExtensionMinutesByRun({});
+        settlingRunIds.current.clear();
+        setSegments(await repository.listSegments(selectedDayRange.startIso, selectedDayRange.endIso));
+        await syncPlatformSettings(nextSettings);
+        setError(null);
+        return data;
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+        throw caught;
+      }
+    },
+    [repository, selectedDayRange.endIso, selectedDayRange.startIso],
+  );
+
   return {
     loading,
     error,
@@ -493,19 +612,22 @@ export function useLifeMonitor(): LifeMonitorController {
     activeSegment,
     stats,
     snapshot,
-    reminderVisible,
+    timeoutNotice,
     startBusy,
     startRest,
     pause,
     resume,
     changeTask,
     extend,
-    acknowledgeReminder,
+    dismissTimeoutNotice,
     saveSettings,
+    addManualSegment,
     updateSegment,
     splitSegment,
     mergeWithPrevious,
     deleteSegment,
+    exportData,
+    importData,
     refresh,
   };
 }

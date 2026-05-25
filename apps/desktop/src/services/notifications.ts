@@ -4,7 +4,7 @@ import { isTauriRuntime } from "./repository";
 
 export async function showReminderNotification(snapshot: TimerSnapshot, settings: LifeSettings): Promise<void> {
   const stateText = snapshot.state === "busy" ? "忙碌" : "休息";
-  const body = `${stateText}已持续 ${formatDuration(snapshot.elapsedSeconds)}，超时 ${formatDuration(snapshot.overtimeSeconds)}。`;
+  const body = `${stateText}到点了，已自动回到空闲。原计划 ${formatDuration(snapshot.targetMinutes * 60)}。`;
 
   if (isTauriRuntime()) {
     try {
@@ -43,15 +43,15 @@ function playReminderTone(): void {
   const gain = context.createGain();
 
   oscillator.type = "sine";
-  oscillator.frequency.value = 720;
+  oscillator.frequency.value = 620;
   gain.gain.setValueAtTime(0.001, context.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.18, context.currentTime + 0.02);
-  gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.55);
+  gain.gain.exponentialRampToValueAtTime(0.1, context.currentTime + 0.03);
+  gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.45);
 
   oscillator.connect(gain);
   gain.connect(context.destination);
   oscillator.start();
-  oscillator.stop(context.currentTime + 0.6);
+  oscillator.stop(context.currentTime + 0.5);
 }
 
 declare global {

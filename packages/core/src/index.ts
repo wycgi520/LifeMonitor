@@ -2,7 +2,7 @@ export type LifeState = "idle" | "busy" | "rest" | "paused";
 
 export type TrackableState = "busy" | "rest";
 
-export type ReminderPolicy = "carry-current-state";
+export type ReminderPolicy = "stop-at-timeout";
 
 export type CloseWindowBehavior = "ask" | "minimize-to-tray" | "quit";
 
@@ -65,7 +65,7 @@ export const DEFAULT_SETTINGS: LifeSettings = {
   autostart: false,
   closeWindowBehavior: "ask",
   quickTasks: ["写代码", "看文档", "开会", "学习英语", "玩游戏"],
-  reminderPolicy: "carry-current-state",
+  reminderPolicy: "stop-at-timeout",
 };
 
 export const UNMARKED_TASK = "未标记";
@@ -113,6 +113,37 @@ export function createSegment(input: {
     createdAt: input.nowIso,
     updatedAt: input.nowIso,
     isEdited: false,
+  };
+}
+
+export function createManualSegment(input: {
+  state: TrackableState;
+  taskName?: string | null;
+  startedAt: string;
+  endedAt: string;
+  settings: LifeSettings;
+  nowIso?: string;
+}): TimelineSegment {
+  const startMs = new Date(input.startedAt).getTime();
+  const endMs = new Date(input.endedAt).getTime();
+
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    throw new Error("手动补记的结束时间需要晚于开始时间。");
+  }
+
+  const nowIso = input.nowIso ?? new Date().toISOString();
+
+  return {
+    id: createId("segment"),
+    stateRunId: createId("run"),
+    state: input.state,
+    taskName: normalizeTaskName(input.taskName),
+    startedAt: input.startedAt,
+    endedAt: input.endedAt,
+    plannedEndAt: addMinutes(input.startedAt, getTargetMinutes(input.state, input.settings)),
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    isEdited: true,
   };
 }
 

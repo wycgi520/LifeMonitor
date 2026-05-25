@@ -167,11 +167,16 @@ h3 {
   flex: 0 0 auto;
 }
 
-.status-pill.busy,
-.status-pill.is-due {
+.status-pill.busy {
   border-color: #e8b16f;
   color: #713f12;
   background: #fff7ed;
+}
+
+.status-pill.is-due {
+  border-color: #dfc27a;
+  color: #6b4f10;
+  background: #fff9ed;
 }
 
 .status-pill.rest {
@@ -223,13 +228,20 @@ h3 {
 }
 
 .due-text {
+  border: 1px solid #d8e0dd;
   padding: 8px 10px;
   border-radius: 6px;
-  color: #7c2d12;
-  background: #fff7ed;
+  color: #40525a;
+  background: #f7faf9;
   font-size: 14px;
   font-weight: 800;
   white-space: nowrap;
+}
+
+.due-text.is-soft-overdue {
+  border-color: #dfc27a;
+  color: #6b4f10;
+  background: #fff9ed;
 }
 
 .timer-grid,
@@ -469,6 +481,37 @@ button:focus-visible {
   margin-top: 16px;
 }
 
+.backfill-form {
+  display: grid;
+  grid-template-columns: 120px minmax(160px, 1fr) 185px 185px auto;
+  gap: 10px;
+  align-items: end;
+  margin-top: 16px;
+  border-top: 1px solid #e4ebe9;
+  border-bottom: 1px solid #e4ebe9;
+  padding: 14px 0;
+}
+
+.backfill-form label {
+  display: grid;
+  gap: 6px;
+  color: #52636b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.backfill-task {
+  min-width: 0;
+}
+
+.inline-message {
+  align-self: center;
+  margin: 0;
+  color: #52636b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .timeline-row {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto auto;
@@ -572,6 +615,29 @@ button:focus-visible {
   justify-self: start;
 }
 
+.settings-divider {
+  margin: 20px 0;
+  border-top: 1px solid #e1e8e6;
+}
+
+.data-portability {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.data-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.data-portability .inline-message {
+  grid-column: 1 / -1;
+}
+
 .reminder {
   position: sticky;
   top: 16px;
@@ -582,7 +648,7 @@ button:focus-visible {
   align-items: center;
   margin-bottom: 18px;
   padding: 18px;
-  border-color: #f0b36b;
+  border-color: #dfc27a;
   background: #fffaf1;
 }
 
@@ -640,9 +706,9 @@ button:focus-visible {
 
 .mini-shell.is-due {
   background:
-    linear-gradient(180deg, rgba(255, 241, 242, 0.98), rgba(254, 226, 226, 0.98)),
-    #fff1f2;
-  box-shadow: inset 0 0 0 2px rgba(225, 29, 72, 0.26);
+    linear-gradient(180deg, rgba(255, 250, 241, 0.98), rgba(255, 246, 224, 0.98)),
+    #fff9ed;
+  box-shadow: inset 0 0 0 2px rgba(217, 119, 6, 0.14);
 }
 
 .mini-drag-region {
@@ -677,9 +743,9 @@ button:focus-visible {
 }
 
 .mini-shell.is-due .mini-status-line {
-  border-color: #fb7185;
-  background: #fff1f2;
-  box-shadow: inset 0 0 0 1px rgba(225, 29, 72, 0.12);
+  border-color: #dfc27a;
+  background: #fff9ed;
+  box-shadow: inset 0 0 0 1px rgba(217, 119, 6, 0.08);
 }
 
 .mini-shell.rest .mini-status-line {
@@ -706,7 +772,7 @@ button:focus-visible {
 }
 
 .mini-state.is-due {
-  color: #9f1239;
+  color: #6b4f10;
 }
 
 .mini-state.rest {
@@ -726,7 +792,7 @@ button:focus-visible {
 }
 
 .mini-shell.is-due .mini-caption {
-  color: #be123c;
+  color: #7c5d12;
 }
 
 .mini-expand {
@@ -749,7 +815,7 @@ button:focus-visible {
 }
 
 .mini-shell.is-due .mini-timer {
-  color: #be123c;
+  color: #6b4f10;
 }
 
 .mini-task-name {
@@ -776,8 +842,8 @@ button:focus-visible {
 }
 
 .mini-shell.is-due .mini-control-row input {
-  border-color: #fda4af;
-  background: #fff1f2;
+  border-color: #dfc27a;
+  background: #fffaf1;
 }
 
 .mini-actions {
@@ -848,6 +914,8 @@ button:focus-visible {
 @media (max-width: 1120px) {
   .dashboard,
   .analysis-layout,
+  .backfill-form,
+  .data-portability,
   .timeline-row,
   .reminder,
   .settings-form {
@@ -862,6 +930,7 @@ button:focus-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .data-actions,
   .row-actions,
   .reminder-actions {
     justify-content: flex-start;

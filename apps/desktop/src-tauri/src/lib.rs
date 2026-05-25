@@ -1,3 +1,8 @@
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -10,7 +15,7 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![quit_app])
+        .invoke_handler(tauri::generate_handler![quit_app, export_json_file])
         .setup(|app| {
             #[cfg(desktop)]
             {
@@ -32,6 +37,70 @@ pub fn run() {
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
+}
+
+#[tauri::command]
+fn export_json_file(app: tauri::AppHandle, file_name: String, content: String) -> Result<String, String> {
+    let safe_name = sanitize_file_name(&file_name)?;
+    let output_dir = app
+        .path()
+        .download_dir()
+        .map_err(|error| format!("无法找到系统下载目录：{error}"))?;
+    fs::create_dir_all(&output_dir).map_err(|error| format!("创建导出目录失败：{error}"))?;
+
+    let output_path = unique_file_path(&output_dir, &safe_name);
+    fs::write(&output_path, content).map_err(|error| format!("写入导出文件失败：{error}"))?;
+
+    Ok(output_path.to_string_lossy().into_owned())
+}
+
+fn sanitize_file_name(file_name: &str) -> Result<String, String> {
+    let trimmed = file_name.trim();
+    if trimmed.is_empty() {
+        return Err("导出文件名不能为空。".to_string());
+    }
+
+    let sanitized: String = trimmed
+        .chars()
+        .map(|character| match character {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            character if character.is_control() => '_',
+            character => character,
+        })
+        .collect();
+
+    if sanitized == "." || sanitized == ".." {
+        return Err("导出文件名无效。".to_string());
+    }
+
+    Ok(sanitized)
+}
+
+fn unique_file_path(output_dir: &Path, file_name: &str) -> PathBuf {
+    let initial = output_dir.join(file_name);
+    if !initial.exists() {
+        return initial;
+    }
+
+    let path = Path::new(file_name);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("lifemonitor");
+    let extension = path.extension().and_then(|value| value.to_str());
+
+    for index in 1.. {
+        let candidate_name = match extension {
+            Some(extension) => format!("{stem} ({index}).{extension}"),
+            None => format!("{stem} ({index})"),
+        };
+        let candidate = output_dir.join(candidate_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    unreachable!("unique file search should always return");
 }
 
 #[cfg(desktop)]

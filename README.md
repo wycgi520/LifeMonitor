@@ -1,6 +1,6 @@
 # LifeMonitor
 
-LifeMonitor is a local-first desktop reminder and activity timeline tool. It tracks busy/rest periods, supports quick task switching, keeps overtime statistics, and lets you edit today's timeline when you forget to fill something in.
+LifeMonitor is a local-first desktop reminder and activity timeline tool. It tracks busy/rest periods, automatically returns to idle when a timer ends, supports quick task switching, manual backfill, and JSON import/export for moving records between devices.
 
 ## Architecture
 

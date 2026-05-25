@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SETTINGS,
   calculateTodayStats,
+  createManualSegment,
   createSegment,
   deriveTimerSnapshot,
   extendDueAt,
@@ -91,5 +92,20 @@ describe("today stats", () => {
     expect(left.endedAt).toBe("2026-05-21T01:30:00.000Z");
     expect(right.startedAt).toBe("2026-05-21T01:30:00.000Z");
     expect(right.stateRunId).toBe(segment.stateRunId);
+  });
+
+  it("creates closed edited segments for manual backfill", () => {
+    const segment = createManualSegment({
+      state: "busy",
+      taskName: "补记会议",
+      startedAt: "2026-05-21T03:00:00.000Z",
+      endedAt: "2026-05-21T03:45:00.000Z",
+      settings: { ...DEFAULT_SETTINGS, busyMinutes: 30 },
+      nowIso: "2026-05-21T04:00:00.000Z",
+    });
+
+    expect(segment.endedAt).toBe("2026-05-21T03:45:00.000Z");
+    expect(segment.plannedEndAt).toBe("2026-05-21T03:30:00.000Z");
+    expect(segment.isEdited).toBe(true);
   });
 });
