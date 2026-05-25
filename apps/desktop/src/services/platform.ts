@@ -33,9 +33,28 @@ export async function syncPlatformSettings(settings: LifeSettings): Promise<void
   if (!isTauriRuntime()) return;
 
   await Promise.allSettled([
-    syncAlwaysOnTop(settings.alwaysOnTop),
+    syncAlwaysOnTopSetting(settings.alwaysOnTop),
     syncAutostart(settings.autostart),
   ]);
+}
+
+export async function syncAlwaysOnTopSetting(alwaysOnTop: boolean): Promise<void> {
+  if (!isTauriRuntime()) return;
+
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("set_window_always_on_top", { alwaysOnTop });
+    return;
+  } catch (commandError) {
+    console.warn("Failed to sync always-on-top setting through Tauri command.", commandError);
+  }
+
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().setAlwaysOnTop(alwaysOnTop);
+  } catch (windowError) {
+    console.warn("Failed to sync always-on-top setting.", windowError);
+  }
 }
 
 export async function syncWindowMode(mode: AppWindowMode): Promise<void> {
@@ -191,15 +210,6 @@ export async function registerWindowCloseBehavior(
 
     await quitApplication(appWindow);
   });
-}
-
-async function syncAlwaysOnTop(alwaysOnTop: boolean): Promise<void> {
-  try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().setAlwaysOnTop(alwaysOnTop);
-  } catch (error) {
-    console.warn("Failed to sync always-on-top setting.", error);
-  }
 }
 
 async function syncAutostart(enabled: boolean): Promise<void> {

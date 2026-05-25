@@ -44,6 +44,7 @@ import {
   registerMiniWindowPositionTracking,
   startWindowDrag,
   startWindowResize,
+  syncAlwaysOnTopSetting,
   syncWindowMode,
   type AppWindowMode,
 } from "./services/platform";
@@ -116,6 +117,11 @@ function App() {
       restMinutes: clampMinutes(settingsDraft.restMinutes, 1, 120),
       quickTasks: settingsDraft.quickTasks.map((task) => task.trim()).filter(Boolean),
     });
+  };
+
+  const updateAlwaysOnTop = (alwaysOnTop: boolean) => {
+    setSettingsDraft((current) => ({ ...current, alwaysOnTop }));
+    void syncAlwaysOnTopSetting(alwaysOnTop);
   };
 
   const openPage = (page: PageId) => {
@@ -225,6 +231,7 @@ function App() {
           <SettingsPage
             settingsDraft={settingsDraft}
             setSettingsDraft={setSettingsDraft}
+            onAlwaysOnTopChange={updateAlwaysOnTop}
             onSubmit={saveSettings}
             onExportData={() => void exportRecords()}
             onRequestImport={requestImportRecords}
@@ -590,6 +597,7 @@ function StatsPage({ monitor, selectedDateLabel }: { monitor: MonitorController;
 function SettingsPage({
   settingsDraft,
   setSettingsDraft,
+  onAlwaysOnTopChange,
   onSubmit,
   onExportData,
   onRequestImport,
@@ -599,6 +607,7 @@ function SettingsPage({
 }: {
   settingsDraft: LifeSettings;
   setSettingsDraft: (updater: (current: LifeSettings) => LifeSettings) => void;
+  onAlwaysOnTopChange: (alwaysOnTop: boolean) => void;
   onSubmit: (event: FormEvent) => void;
   onExportData: () => void;
   onRequestImport: () => void;
@@ -654,9 +663,7 @@ function SettingsPage({
           <input
             type="checkbox"
             checked={settingsDraft.alwaysOnTop}
-            onChange={(event) =>
-              setSettingsDraft((current) => ({ ...current, alwaysOnTop: event.target.checked }))
-            }
+            onChange={(event) => onAlwaysOnTopChange(event.target.checked)}
           />
           <Pin aria-hidden="true" />
           窗口置顶

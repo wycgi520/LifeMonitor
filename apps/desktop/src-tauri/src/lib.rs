@@ -15,7 +15,11 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![quit_app, export_json_file])
+        .invoke_handler(tauri::generate_handler![
+            quit_app,
+            export_json_file,
+            set_window_always_on_top
+        ])
         .setup(|app| {
             #[cfg(desktop)]
             {
@@ -40,7 +44,22 @@ fn quit_app(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn export_json_file(app: tauri::AppHandle, file_name: String, content: String) -> Result<String, String> {
+fn set_window_always_on_top(app: tauri::AppHandle, always_on_top: bool) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "无法找到主窗口。".to_string())?;
+
+    window
+        .set_always_on_top(always_on_top)
+        .map_err(|error| format!("设置窗口置顶失败：{error}"))
+}
+
+#[tauri::command]
+fn export_json_file(
+    app: tauri::AppHandle,
+    file_name: String,
+    content: String,
+) -> Result<String, String> {
     let safe_name = sanitize_file_name(&file_name)?;
     let output_dir = app
         .path()
