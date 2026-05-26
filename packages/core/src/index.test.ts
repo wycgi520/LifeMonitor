@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SETTINGS,
   calculateTodayStats,
+  canMergeSegments,
   createManualSegment,
   createSegment,
   deriveTimerSnapshot,
@@ -34,6 +35,62 @@ describe("timer snapshot", () => {
     expect(
       extendDueAt("2026-05-21T01:50:00.000Z", "2026-05-21T01:55:00.000Z", 10),
     ).toBe("2026-05-21T02:05:00.000Z");
+  });
+});
+
+describe("segment merge", () => {
+  it("allows same state and task across different runs and non-adjacent times", () => {
+    const left = {
+      ...createSegment({
+        state: "busy",
+        taskName: "coding",
+        nowIso: "2026-05-21T01:00:00.000Z",
+        settings: DEFAULT_SETTINGS,
+        stateRunId: "run_a",
+      }),
+      endedAt: "2026-05-21T01:30:00.000Z",
+      plannedEndAt: "2026-05-21T01:50:00.000Z",
+    };
+    const right = {
+      ...createSegment({
+        state: "busy",
+        taskName: " coding ",
+        nowIso: "2026-05-21T02:00:00.000Z",
+        settings: DEFAULT_SETTINGS,
+        stateRunId: "run_b",
+      }),
+      endedAt: "2026-05-21T02:30:00.000Z",
+      plannedEndAt: "2026-05-21T02:50:00.000Z",
+    };
+
+    expect(canMergeSegments(left, right)).toBe(true);
+  });
+
+  it("rejects different states or different tasks", () => {
+    const left = {
+      ...createSegment({
+        state: "busy",
+        taskName: "coding",
+        nowIso: "2026-05-21T01:00:00.000Z",
+        settings: DEFAULT_SETTINGS,
+      }),
+      endedAt: "2026-05-21T01:30:00.000Z",
+    };
+
+    expect(
+      canMergeSegments(left, {
+        ...left,
+        id: "segment_rest",
+        state: "rest",
+      }),
+    ).toBe(false);
+    expect(
+      canMergeSegments(left, {
+        ...left,
+        id: "segment_reading",
+        taskName: "reading",
+      }),
+    ).toBe(false);
   });
 });
 

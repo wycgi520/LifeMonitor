@@ -10,6 +10,7 @@ import {
   extendDueAt,
   getTargetMinutes,
   getLocalDayRange,
+  mergeSegments,
   normalizeTaskName,
   splitSegmentAt,
   type LifeSettings,
@@ -85,7 +86,8 @@ export function useLifeMonitor(): LifeMonitorController {
   const [settings, setSettings] = useState<LifeSettings>(DEFAULT_SETTINGS);
   const [state, setState] = useState<LifeState>("idle");
   const [selectedDate, setSelectedDateState] = useState(() => toLocalDateKey(new Date()));
-  const [taskDraft, setTaskDraft] = useState("");
+  const [taskDraft, setTaskDraftValue] = useState("");
+  const [isTaskDraftUserEdited, setIsTaskDraftUserEdited] = useState(false);
   const [segments, setSegments] = useState<TimelineSegment[]>([]);
   const [activeSegment, setActiveSegment] = useState<TimelineSegment | null>(null);
   const [pausedContext, setPausedContext] = useState<PausedContext | null>(null);
@@ -128,6 +130,16 @@ export function useLifeMonitor(): LifeMonitorController {
     setSelectedDateState(toLocalDateKey(new Date()));
   }, []);
 
+  const setTaskDraft = useCallback((value: string) => {
+    setTaskDraftValue(value);
+    setIsTaskDraftUserEdited(true);
+  }, []);
+
+  const setTaskDraftFromSystem = useCallback((value: string) => {
+    setTaskDraftValue(value);
+    setIsTaskDraftUserEdited(false);
+  }, []);
+
   const refresh = useCallback(async () => {
     if (!repository) return;
     setSegments(await repository.listSegments(selectedDayRange.startIso, selectedDayRange.endIso));
@@ -148,7 +160,7 @@ export function useLifeMonitor(): LifeMonitorController {
         setSettings(nextSettings);
         setActiveSegment(openSegment);
         setState(openSegment?.state ?? "idle");
-        setTaskDraft(openSegment?.taskName ?? "");
+        setTaskDraftFromSystem(openSegment?.taskName ?? "");
         setSegments(await nextRepository.listSegments(selectedDayRange.startIso, selectedDayRange.endIso));
         await syncPlatformSettings(nextSettings);
       } catch (caught) {
@@ -159,7 +171,7 @@ export function useLifeMonitor(): LifeMonitorController {
     };
 
     void init();
-  }, [selectedDayRange.endIso, selectedDayRange.startIso]);
+  }, [selectedDayRange.endIso, selectedDayRange.startIso, setTaskDraftFromSystem]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -297,7 +309,7 @@ export function useLifeMonitor(): LifeMonitorController {
           await repo.updateSegment(closed);
           setActiveSegment(null);
           setState("idle");
-          setTaskDraft("");
+          setTaskDraftFromSystem("");
           setPausedContext(null);
           setTimeoutNotice({
             state: activeSegment.state,
@@ -315,7 +327,7 @@ export function useLifeMonitor(): LifeMonitorController {
         settlingRunIds.current.delete(runId);
       }
     })();
-  }, [activeSegment, notifiedRunIds, persistAndRefresh, repository, settings, snapshot, state]);
+  }, [activeSegment, notifiedRunIds, persistAndRefresh, repository, setTaskDraftFromSystem, settings, snapshot, state]);
 
   const closeCurrent = useCallback(
     async (repo: LifeRepository, endedAt: string) => {
@@ -334,8 +346,8 @@ export function useLifeMonitor(): LifeMonitorController {
 
       await persistAndRefresh(async (repo) => {
         await closeCurrent(repo, now);
-        const normalizedTask =
-          normalizeTaskName(taskName ?? taskDraft) ?? (await repo.getLatestTaskName(nextState));
+        const draftTask = taskName === undefined && !isTaskDraftUserEdited ? null : normalizeTaskName(taskName ?? taskDraft);
+        const normalizedTask = draftTask ?? (await repo.getLatestTaskName(nextState));
         const nextSegment = createSegment({
           state: nextState,
           taskName: normalizedTask,
@@ -347,12 +359,12 @@ export function useLifeMonitor(): LifeMonitorController {
         await repo.insertSegment(nextSegment);
         setActiveSegment(nextSegment);
         setState(nextState);
-        setTaskDraft(nextSegment.taskName ?? "");
+        setTaskDraftFromSystem(nextSegment.taskName ?? "");
         setPausedContext(null);
         setTimeoutNotice(null);
       });
     },
-    [activeSegment, closeCurrent, persistAndRefresh, taskDraft],
+    [activeSegment, closeCurrent, isTaskDraftUserEdited, persistAndRefresh, setTaskDraftFromSystem, taskDraft],
   );
 
   const startBusy = useCallback(
@@ -386,7 +398,7 @@ export function useLifeMonitor(): LifeMonitorController {
 
   const resume = useCallback(async () => {
     if (!pausedContext) {
-      await switchToState("busy", taskDraft);
+      await switchToState("busy");
       return;
     }
 
@@ -405,17 +417,21 @@ export function useLifeMonitor(): LifeMonitorController {
       await repo.insertSegment(nextSegment);
       setActiveSegment(nextSegment);
       setState(pausedContext.state);
-      setTaskDraft(nextSegment.taskName ?? "");
+      setTaskDraftFromSystem(nextSegment.taskName ?? "");
       setPausedContext(null);
       setTimeoutNotice(null);
     });
-  }, [pausedContext, persistAndRefresh, switchToState, taskDraft]);
+  }, [pausedContext, persistAndRefresh, setTaskDraftFromSystem, switchToState]);
 
   const changeTask = useCallback(
     async (taskName: string | null) => {
       const normalizedTask = normalizeTaskName(taskName);
-      setTaskDraft(normalizedTask ?? "");
-      if (!activeSegment) return;
+      if (!activeSegment) {
+        setTaskDraft(normalizedTask ?? "");
+        return;
+      }
+
+      setTaskDraftFromSystem(normalizedTask ?? "");
 
       const now = new Date().toISOString();
       await persistAndRefresh(async (repo) => {
@@ -432,7 +448,7 @@ export function useLifeMonitor(): LifeMonitorController {
         setActiveSegment(nextSegment);
       });
     },
-    [activeSegment, closeCurrent, persistAndRefresh],
+    [activeSegment, closeCurrent, persistAndRefresh, setTaskDraft, setTaskDraftFromSystem],
   );
 
   const extend = useCallback(
@@ -557,11 +573,11 @@ export function useLifeMonitor(): LifeMonitorController {
         if (activeSegment?.id === updated.id) {
           setActiveSegment(updated);
           setState(updated.state);
-          setTaskDraft(updated.taskName ?? "");
+          setTaskDraftFromSystem(updated.taskName ?? "");
         }
       });
     },
-    [activeSegment, persistAndRefresh],
+    [activeSegment, persistAndRefresh, setTaskDraftFromSystem],
   );
 
   const splitSegment = useCallback(
@@ -586,12 +602,7 @@ export function useLifeMonitor(): LifeMonitorController {
       if (!previous || !canMergeSegments(previous, segment)) return;
 
       await persistAndRefresh(async (repo) => {
-        const merged = {
-          ...previous,
-          endedAt: segment.endedAt,
-          updatedAt: new Date().toISOString(),
-          isEdited: true,
-        };
+        const merged = mergeSegments(previous, segment);
         await repo.updateSegment(merged);
         await repo.deleteSegment(segment.id);
         if (activeSegment?.id === segment.id) setActiveSegment(merged);
@@ -637,7 +648,7 @@ export function useLifeMonitor(): LifeMonitorController {
         setSettings(nextSettings);
         setActiveSegment(openSegment);
         setState(openSegment?.state ?? "idle");
-        setTaskDraft(openSegment?.taskName ?? "");
+        setTaskDraftFromSystem(openSegment?.taskName ?? "");
         setPausedContext(null);
         setTimeoutNotice(null);
         setNotifiedRunIds(new Set());
@@ -652,7 +663,7 @@ export function useLifeMonitor(): LifeMonitorController {
         throw caught;
       }
     },
-    [repository, selectedDayRange.endIso, selectedDayRange.startIso],
+    [repository, selectedDayRange.endIso, selectedDayRange.startIso, setTaskDraftFromSystem],
   );
 
   return {

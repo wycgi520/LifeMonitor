@@ -32,6 +32,7 @@ import {
   UNMARKED_TASK,
   canMergeSegments,
   formatDuration,
+  normalizeTaskName,
   type CloseWindowBehavior,
   type LifeSettings,
   type TimelineSegment,
@@ -965,6 +966,11 @@ function TimelineRow({
   const [draft, setDraft] = useState(segment);
   const [splitAt, setSplitAt] = useState(() => midpointInputValue(segment));
   const canMerge = previous ? canMergeSegments(previous, segment) : false;
+  const handleMerge = () => {
+    if (!previous || !canMerge) return;
+    if (!window.confirm(buildMergeConfirmationMessage(previous, segment))) return;
+    void onMerge(segment);
+  };
 
   useEffect(() => {
     setDraft(segment);
@@ -1044,7 +1050,7 @@ function TimelineRow({
           type="button"
           className="icon-only"
           disabled={!canMerge}
-          onClick={() => void onMerge(segment)}
+          onClick={handleMerge}
           title="与下方一段合并"
         >
           <Merge className="merge-down-icon" aria-hidden="true" />
@@ -1083,6 +1089,33 @@ function createDefaultBackfillDraft(selectedDate: string): BackfillDraft {
     startedAt: toLocalInputValue(start.toISOString()),
     endedAt: toLocalInputValue(end.toISOString()),
   };
+}
+
+function buildMergeConfirmationMessage(previous: TimelineSegment, segment: TimelineSegment): string {
+  const stateLabel = trackableStateLabels[segment.state];
+  const taskName = normalizeTaskName(segment.taskName) ?? normalizeTaskName(previous.taskName) ?? UNMARKED_TASK;
+  const gapSeconds = previous.endedAt
+    ? Math.max(0, Math.round((new Date(segment.startedAt).getTime() - new Date(previous.endedAt).getTime()) / 1000))
+    : 0;
+  const lines = [
+    `确定要合并这两段${stateLabel}记录吗？`,
+    `内容：${taskName}`,
+    `上一段：${formatSegmentRangeLabel(previous)}`,
+    `当前段：${formatSegmentRangeLabel(segment)}`,
+  ];
+
+  if (gapSeconds > 0) {
+    lines.push(`两段之间有 ${formatDuration(gapSeconds)} 空档，合并后会计入${stateLabel}时长。`);
+  }
+
+  lines.push("合并后会保留上一段的开始时间和当前段的结束时间。");
+  return lines.join("\n");
+}
+
+function formatSegmentRangeLabel(segment: TimelineSegment): string {
+  return `${formatDateTimeLabel(segment.startedAt)} - ${
+    segment.endedAt ? formatDateTimeLabel(segment.endedAt) : "进行中"
+  }`;
 }
 
 function advanceBackfillDraft(current: BackfillDraft): BackfillDraft {

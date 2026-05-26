@@ -275,13 +275,7 @@ export function splitSegmentAt(segment: TimelineSegment, splitAtIso: string, now
 }
 
 export function canMergeSegments(left: TimelineSegment, right: TimelineSegment): boolean {
-  return (
-    left.state === right.state &&
-    left.stateRunId === right.stateRunId &&
-    left.taskName === right.taskName &&
-    left.endedAt === right.startedAt &&
-    left.plannedEndAt === right.plannedEndAt
-  );
+  return left.state === right.state && normalizeTaskName(left.taskName) === normalizeTaskName(right.taskName);
 }
 
 export function mergeSegments(left: TimelineSegment, right: TimelineSegment, nowIso = new Date().toISOString()): TimelineSegment {
