@@ -290,6 +290,15 @@ function TimeoutNoticeBanner({
         <p className="muted">上一段：{notice.taskName ?? UNMARKED_TASK}</p>
       </div>
       <div className="reminder-actions">
+        <button
+          type="button"
+          className="icon-button"
+          onClick={() => void monitor.extendTimeoutNoticeToNow()}
+          title="把刚刚结束的状态补到现在"
+        >
+          <Clock3 aria-hidden="true" />
+          <span>补到现在</span>
+        </button>
         <button type="button" className="icon-button primary" onClick={() => void monitor.startBusy()} title="从现在开始忙碌">
           <BriefcaseBusiness aria-hidden="true" />
           <span>从现在忙碌</span>
@@ -1254,6 +1263,17 @@ function MiniReminderWindow({
           >
             {pauseAction.icon}
           </button>
+          {monitor.timeoutNotice && (
+            <button
+              type="button"
+              className="icon-only mini-action-button"
+              onClick={() => void monitor.extendTimeoutNoticeToNow()}
+              title="把刚刚结束的状态补到现在"
+              aria-label="补到现在"
+            >
+              <Clock3 aria-hidden="true" />
+            </button>
+          )}
         </div>
       </div>
       <button type="button" className="mini-resize-handle" onMouseDown={handleStartResize} title="调整窗口大小">

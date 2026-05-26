@@ -43,6 +43,7 @@ interface TimeoutNotice {
   taskName: string | null;
   endedAt: string;
   runId: string;
+  segment: TimelineSegment;
 }
 
 export interface LifeMonitorController {
@@ -69,6 +70,7 @@ export interface LifeMonitorController {
   resume: () => Promise<void>;
   changeTask: (taskName: string | null) => Promise<void>;
   extend: (minutes: number) => Promise<void>;
+  extendTimeoutNoticeToNow: () => Promise<void>;
   dismissTimeoutNotice: () => void;
   saveSettings: (settings: LifeSettings) => Promise<void>;
   addManualSegment: (input: ManualSegmentInput) => Promise<boolean>;
@@ -316,6 +318,7 @@ export function useLifeMonitor(): LifeMonitorController {
             taskName: activeSegment.taskName,
             endedAt: dueAt,
             runId,
+            segment: closed,
           });
           setExtensionMinutesByRun((previous) => {
             const next = { ...previous };
@@ -476,6 +479,30 @@ export function useLifeMonitor(): LifeMonitorController {
   const dismissTimeoutNotice = useCallback(() => {
     setTimeoutNotice(null);
   }, []);
+
+  const extendTimeoutNoticeToNow = useCallback(async () => {
+    if (!timeoutNotice || activeSegment) return;
+
+    const now = new Date().toISOString();
+    if (new Date(now).getTime() <= new Date(timeoutNotice.endedAt).getTime()) {
+      setTimeoutNotice(null);
+      return;
+    }
+
+    await persistAndRefresh(async (repo) => {
+      const updatedSegment = {
+        ...timeoutNotice.segment,
+        endedAt: now,
+        plannedEndAt: now,
+        updatedAt: now,
+        isEdited: true,
+      };
+
+      await repo.updateRunPlannedEnd(timeoutNotice.runId, now, now);
+      await repo.updateSegment(updatedSegment);
+      setTimeoutNotice(null);
+    });
+  }, [activeSegment, persistAndRefresh, timeoutNotice]);
 
   const saveSettings = useCallback(
     async (nextSettings: LifeSettings) => {
@@ -690,6 +717,7 @@ export function useLifeMonitor(): LifeMonitorController {
     resume,
     changeTask,
     extend,
+    extendTimeoutNoticeToNow,
     dismissTimeoutNotice,
     saveSettings,
     addManualSegment,
