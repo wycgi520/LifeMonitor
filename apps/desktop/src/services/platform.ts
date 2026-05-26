@@ -67,6 +67,7 @@ export async function syncWindowMode(mode: AppWindowMode): Promise<void> {
     if (mode === "mini") {
       const miniSize = new LogicalSize(MINI_WINDOW.width, MINI_WINDOW.height);
 
+      await appWindow.setSkipTaskbar(true);
       await appWindow.setDecorations(false);
       await appWindow.setMinSize(new LogicalSize(MINI_WINDOW.minWidth, MINI_WINDOW.minHeight));
       await appWindow.setMaxSize(null);
@@ -76,6 +77,7 @@ export async function syncWindowMode(mode: AppWindowMode): Promise<void> {
       return;
     }
 
+    await appWindow.setSkipTaskbar(false);
     await appWindow.setDecorations(true);
     await appWindow.setMaxSize(null);
     await appWindow.setResizable(true);
