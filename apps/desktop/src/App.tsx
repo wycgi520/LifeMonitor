@@ -25,8 +25,21 @@ import {
   Trash2,
   Upload,
   Volume2,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type MouseEvent, type RefObject } from "react";
+import {
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+  type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type RefObject,
+} from "react";
 import {
   DEFAULT_SETTINGS,
   UNMARKED_TASK,
@@ -51,9 +64,15 @@ import {
 } from "./services/platform";
 
 const WINDOW_MODE_STORAGE_KEY = "lifemonitor:window-mode:v1";
+const RULER_STEP_MINUTES = 1;
+const DAY_MINUTES = 24 * 60;
+const DEFAULT_BACKFILL_MINUTES = 30;
+const RULER_BASE_WIDTH_PX = 960;
+const RULER_ZOOM_LEVELS = [1, 1.5, 2.5, 4] as const;
 
 type PageId = "today" | "timeline" | "stats" | "settings";
 type MonitorController = ReturnType<typeof useLifeMonitor>;
+type BackfillDragMode = "start" | "end" | "range";
 
 const stateLabels = {
   idle: "空闲",
@@ -271,7 +290,15 @@ function TimeoutNoticeBanner({
         <p className="muted">上一段：{notice.taskName ?? UNMARKED_TASK}</p>
       </div>
       <div className="reminder-actions">
-        <button type="button" className="icon-button primary" onClick={onOpenTimeline} title="打开时间线补记">
+        <button type="button" className="icon-button primary" onClick={() => void monitor.startBusy()} title="从现在开始忙碌">
+          <BriefcaseBusiness aria-hidden="true" />
+          <span>从现在忙碌</span>
+        </button>
+        <button type="button" className="icon-button rest" onClick={() => void monitor.startRest()} title="从现在开始休息">
+          <Coffee aria-hidden="true" />
+          <span>从现在休息</span>
+        </button>
+        <button type="button" className="icon-button" onClick={onOpenTimeline} title="打开时间线补记">
           <ListTree aria-hidden="true" />
           <span>补记/调整</span>
         </button>
@@ -462,6 +489,7 @@ function TimelinePage({
             <TimelineRow
               key={segment.id}
               segment={segment}
+              selectedDate={monitor.selectedDate}
               previous={previousSegmentById.get(segment.id) ?? null}
               isActive={segment.id === monitor.activeSegment?.id}
               onUpdate={monitor.updateSegment}
@@ -479,25 +507,254 @@ function TimelinePage({
 interface BackfillDraft {
   state: TrackableState;
   taskName: string;
-  startedAt: string;
-  endedAt: string;
+  startMinute: number;
+  endMinute: number;
+}
+
+interface BackfillDragState {
+  mode: BackfillDragMode;
+  pointerMinute: number;
+  startMinute: number;
+  endMinute: number;
+}
+
+interface RulerPanState {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  scrollLeft: number;
+  didPan: boolean;
+}
+
+interface RulerSegmentBlock {
+  id: string;
+  state: TrackableState;
+  startMinute: number;
+  endMinute: number;
 }
 
 function BackfillPanel({ monitor }: { monitor: MonitorController }) {
   const [draft, setDraft] = useState<BackfillDraft>(() => createDefaultBackfillDraft(monitor.selectedDate));
   const [message, setMessage] = useState<string | null>(null);
+  const [rulerZoom, setRulerZoom] = useState<(typeof RULER_ZOOM_LEVELS)[number]>(1);
+  const rulerRef = useRef<HTMLDivElement>(null);
+  const rulerScrollRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<BackfillDragState | null>(null);
+  const rulerPanRef = useRef<RulerPanState | null>(null);
+  const [isRulerPanning, setIsRulerPanning] = useState(false);
+  const maxSelectableMinute = getBackfillMaxMinute(monitor.selectedDate);
+  const hourMarks = useMemo(() => Array.from({ length: 9 }, (_, index) => index * 180), []);
+  const zoomIndex = RULER_ZOOM_LEVELS.indexOf(rulerZoom);
+  const occupiedBlocks = useMemo(
+    () =>
+      monitor.segments
+        .map((segment) => getRulerSegmentBlock(segment, monitor.selectedDate))
+        .filter((block): block is RulerSegmentBlock => Boolean(block)),
+    [monitor.segments, monitor.selectedDate],
+  );
 
   useEffect(() => {
     setDraft(createDefaultBackfillDraft(monitor.selectedDate));
     setMessage(null);
   }, [monitor.selectedDate]);
 
+  useEffect(() => {
+    setDraft((current) => ({
+      ...current,
+      ...clampBackfillSelection(current.startMinute, current.endMinute, maxSelectableMinute),
+    }));
+  }, [maxSelectableMinute]);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      const ruler = rulerRef.current;
+      if (!drag || !ruler) return;
+
+      event.preventDefault();
+      const pointerMinute = minuteFromClientX(event.clientX, ruler, maxSelectableMinute);
+
+      setDraft((current) => {
+        if (drag.mode === "start") {
+          return {
+            ...current,
+            ...clampBackfillSelection(Math.min(pointerMinute, drag.endMinute - RULER_STEP_MINUTES), drag.endMinute, maxSelectableMinute),
+          };
+        }
+
+        if (drag.mode === "end") {
+          return {
+            ...current,
+            ...clampBackfillSelection(drag.startMinute, Math.max(pointerMinute, drag.startMinute + RULER_STEP_MINUTES), maxSelectableMinute),
+          };
+        }
+
+        const duration = Math.max(RULER_STEP_MINUTES, drag.endMinute - drag.startMinute);
+        const maxStart = Math.max(0, maxSelectableMinute - duration);
+        const nextStart = snapMinute(clamp(drag.startMinute + pointerMinute - drag.pointerMinute, 0, maxStart));
+        return {
+          ...current,
+          ...clampBackfillSelection(nextStart, nextStart + duration, maxSelectableMinute),
+        };
+      });
+    };
+
+    const stopDrag = () => {
+      dragRef.current = null;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopDrag);
+    window.addEventListener("pointercancel", stopDrag);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopDrag);
+      window.removeEventListener("pointercancel", stopDrag);
+    };
+  }, [maxSelectableMinute]);
+
+  const setBackfillRange = (startMinute: number, endMinute: number) => {
+    setDraft((current) => ({
+      ...current,
+      ...clampBackfillSelection(startMinute, endMinute, maxSelectableMinute),
+    }));
+    setMessage(null);
+  };
+
+  const startBackfillDrag = (event: ReactPointerEvent<HTMLElement>, mode: BackfillDragMode) => {
+    const ruler = rulerRef.current;
+    if (!ruler || maxSelectableMinute < RULER_STEP_MINUTES) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dragRef.current = {
+      mode,
+      pointerMinute: minuteFromClientX(event.clientX, ruler, maxSelectableMinute),
+      startMinute: draft.startMinute,
+      endMinute: draft.endMinute,
+    };
+  };
+
+  const moveSelectionToClientX = (clientX: number) => {
+    const ruler = rulerRef.current;
+    if (!ruler) return;
+    if (maxSelectableMinute < RULER_STEP_MINUTES) return;
+
+    const pointerMinute = minuteFromClientX(clientX, ruler, maxSelectableMinute);
+    const duration = Math.max(RULER_STEP_MINUTES, draft.endMinute - draft.startMinute);
+    const maxStart = Math.max(0, maxSelectableMinute - duration);
+    const nextStart = snapMinute(clamp(pointerMinute - duration / 2, 0, maxStart));
+    setBackfillRange(nextStart, nextStart + duration);
+  };
+
+  const startRulerPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    const scroll = rulerScrollRef.current;
+    if (event.button !== 0 || !scroll || target.closest(".backfill-selection, .backfill-handle")) return;
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    rulerPanRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: scroll.scrollLeft,
+      didPan: false,
+    };
+  };
+
+  const moveRulerPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pan = rulerPanRef.current;
+    const scroll = rulerScrollRef.current;
+    if (!pan || !scroll || pan.pointerId !== event.pointerId) return;
+
+    const deltaX = event.clientX - pan.startX;
+    const deltaY = event.clientY - pan.startY;
+    if (Math.abs(deltaX) < 4 && Math.abs(deltaY) < 4) return;
+
+    event.preventDefault();
+    pan.didPan = true;
+    setIsRulerPanning(true);
+    scroll.scrollLeft = pan.scrollLeft - deltaX;
+  };
+
+  const stopRulerPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pan = rulerPanRef.current;
+    if (!pan || pan.pointerId !== event.pointerId) return;
+
+    rulerPanRef.current = null;
+    setIsRulerPanning(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    if (!pan.didPan && event.type === "pointerup") {
+      moveSelectionToClientX(event.clientX);
+    }
+  };
+
+  const updateStartTime = (value: string) => {
+    const minute = minuteFromTimeInput(value);
+    if (minute === null) return;
+    setBackfillRange(minute, draft.endMinute);
+  };
+
+  const updateEndTime = (value: string) => {
+    const minute = minuteFromTimeInput(value);
+    if (minute === null) return;
+    setBackfillRange(draft.startMinute, minute);
+  };
+
+  const setRulerZoomAround = useCallback((nextZoom: (typeof RULER_ZOOM_LEVELS)[number], anchorClientX?: number) => {
+    const scroll = rulerScrollRef.current;
+    const previousWidth = RULER_BASE_WIDTH_PX * rulerZoom;
+    let anchorRatio = 0;
+    let anchorOffset = 0;
+
+    if (scroll && anchorClientX !== undefined && previousWidth > 0) {
+      const rect = scroll.getBoundingClientRect();
+      anchorOffset = clamp(anchorClientX - rect.left, 0, rect.width);
+      anchorRatio = clamp((scroll.scrollLeft + anchorOffset) / previousWidth, 0, 1);
+    }
+
+    setRulerZoom(nextZoom);
+
+    if (!scroll || anchorClientX === undefined) return;
+
+    window.requestAnimationFrame(() => {
+      const nextWidth = RULER_BASE_WIDTH_PX * nextZoom;
+      const maxScrollLeft = Math.max(0, scroll.scrollWidth - scroll.clientWidth);
+      scroll.scrollLeft = clamp(anchorRatio * nextWidth - anchorOffset, 0, maxScrollLeft);
+    });
+  }, [rulerZoom]);
+
+  const changeRulerZoom = useCallback((direction: -1 | 1, anchorClientX?: number) => {
+    const nextIndex = clamp(zoomIndex + direction, 0, RULER_ZOOM_LEVELS.length - 1);
+    if (nextIndex === zoomIndex) return;
+    setRulerZoomAround(RULER_ZOOM_LEVELS[nextIndex] ?? rulerZoom, anchorClientX);
+  }, [rulerZoom, setRulerZoomAround, zoomIndex]);
+
+  useEffect(() => {
+    const scroll = rulerScrollRef.current;
+    if (!scroll) return;
+
+    const handleWheel = (event: WheelEvent) => {
+      if (event.deltaY === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      changeRulerZoom(event.deltaY < 0 ? 1 : -1, event.clientX);
+    };
+
+    scroll.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      scroll.removeEventListener("wheel", handleWheel);
+    };
+  }, [changeRulerZoom]);
+
   const submitBackfill = async (event: FormEvent) => {
     event.preventDefault();
-    const startMs = new Date(draft.startedAt).getTime();
-    const endMs = new Date(draft.endedAt).getTime();
+    const range = clampBackfillSelection(draft.startMinute, draft.endMinute, maxSelectableMinute);
 
-    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    if (range.endMinute <= range.startMinute || range.endMinute > maxSelectableMinute) {
       setMessage("结束时间需要晚于开始时间。");
       return;
     }
@@ -505,58 +762,188 @@ function BackfillPanel({ monitor }: { monitor: MonitorController }) {
     const added = await monitor.addManualSegment({
       state: draft.state,
       taskName: draft.taskName,
-      startedAt: new Date(startMs).toISOString(),
-      endedAt: new Date(endMs).toISOString(),
+      startedAt: isoFromLocalMinute(monitor.selectedDate, range.startMinute),
+      endedAt: isoFromLocalMinute(monitor.selectedDate, range.endMinute),
     });
-    if (!added) return;
+    if (!added) {
+      setMessage("补记失败：时间和已有记录重叠或格式有误。");
+      return;
+    }
 
     setMessage("已添加补记。");
-    setDraft((current) => advanceBackfillDraft(current));
+    setDraft((current) => advanceBackfillDraft(current, maxSelectableMinute));
   };
+
+  const canSubmit = draft.endMinute > draft.startMinute && draft.endMinute <= maxSelectableMinute;
+  const selectionLeft = toRulerPercent(draft.startMinute);
+  const selectionWidth = toRulerPercent(Math.max(0, draft.endMinute - draft.startMinute));
+  const latestStartMinute = Math.max(0, Math.min(maxSelectableMinute - RULER_STEP_MINUTES, DAY_MINUTES - RULER_STEP_MINUTES));
+  const latestEndInputMinute = Math.max(0, Math.min(maxSelectableMinute, DAY_MINUTES - RULER_STEP_MINUTES));
+  const rulerWidth = RULER_BASE_WIDTH_PX * rulerZoom;
 
   return (
     <form className="backfill-form" onSubmit={submitBackfill}>
-      <label>
-        类型
-        <select
-          value={draft.state}
-          onChange={(event) =>
-            setDraft((current) => ({ ...current, state: event.target.value as TrackableState }))
-          }
+      <div className="backfill-ruler-panel">
+        <div className="backfill-ruler-head">
+          <div>
+            <p className="eyebrow">补记时间</p>
+            <strong>
+              {formatMinuteLabel(draft.startMinute)} - {formatMinuteLabel(draft.endMinute)}
+            </strong>
+            <div className="backfill-ruler-legend" aria-label="时间尺图例">
+              <span className="legend-item">
+                <i className="legend-swatch busy" aria-hidden="true" />
+                已有忙碌
+              </span>
+              <span className="legend-item">
+                <i className="legend-swatch rest" aria-hidden="true" />
+                已有休息
+              </span>
+              <span className="legend-item">
+                <i className={`legend-swatch selection ${draft.state}`} aria-hidden="true" />
+                补记范围
+              </span>
+            </div>
+          </div>
+          <div className="backfill-ruler-tools" aria-label="时间尺缩放">
+            <span>{formatDuration((draft.endMinute - draft.startMinute) * 60)}</span>
+            <button
+              type="button"
+              className="icon-only"
+              disabled={zoomIndex <= 0}
+              onClick={() => changeRulerZoom(-1)}
+              title="缩小时间尺"
+              aria-label="缩小时间尺"
+            >
+              <ZoomOut aria-hidden="true" />
+            </button>
+            <strong className="ruler-zoom-label">{formatRulerZoomLabel(rulerZoom)}</strong>
+            <button
+              type="button"
+              className="icon-only"
+              disabled={zoomIndex >= RULER_ZOOM_LEVELS.length - 1}
+              onClick={() => changeRulerZoom(1)}
+              title="放大时间尺"
+              aria-label="放大时间尺"
+            >
+              <ZoomIn aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+        <div
+          ref={rulerScrollRef}
+          className={`backfill-ruler-scroll ${isRulerPanning ? "is-panning" : ""}`}
+          title="滚轮缩放时间尺"
+          onPointerDown={startRulerPan}
+          onPointerMove={moveRulerPan}
+          onPointerUp={stopRulerPan}
+          onPointerCancel={stopRulerPan}
         >
-          <option value="busy">忙碌</option>
-          <option value="rest">休息</option>
-        </select>
-      </label>
-      <label className="backfill-task">
-        内容
-        <input
-          value={draft.taskName}
-          placeholder={draft.state === "busy" ? "补记任务" : "休息内容"}
-          onChange={(event) => setDraft((current) => ({ ...current, taskName: event.target.value }))}
-        />
-      </label>
-      <label>
-        开始
-        <input
-          type="datetime-local"
-          value={draft.startedAt}
-          onChange={(event) => setDraft((current) => ({ ...current, startedAt: event.target.value }))}
-        />
-      </label>
-      <label>
-        结束
-        <input
-          type="datetime-local"
-          value={draft.endedAt}
-          onChange={(event) => setDraft((current) => ({ ...current, endedAt: event.target.value }))}
-        />
-      </label>
-      <button type="submit" className="icon-button primary">
-        <Plus aria-hidden="true" />
-        <span>添加补记</span>
-      </button>
-      {message && <p className="inline-message">{message}</p>}
+          <div
+            ref={rulerRef}
+            className="backfill-ruler"
+            style={{ width: `${rulerWidth}px`, minWidth: `${rulerWidth}px` }}
+            role="presentation"
+          >
+            {hourMarks.map((minute) => (
+              <div key={minute} className="ruler-tick" style={{ left: `${toRulerPercent(minute)}%` }}>
+                <span>{formatHourMark(minute)}</span>
+              </div>
+            ))}
+            {occupiedBlocks.map((block) => (
+              <div
+                key={block.id}
+                className={`ruler-segment ${block.state}`}
+                style={{
+                  left: `${toRulerPercent(block.startMinute)}%`,
+                  width: `${Math.max(0.3, toRulerPercent(block.endMinute - block.startMinute))}%`,
+                }}
+                title={`${trackableStateLabels[block.state]} ${formatMinuteLabel(block.startMinute)} - ${formatMinuteLabel(block.endMinute)}`}
+              />
+            ))}
+            {maxSelectableMinute < DAY_MINUTES && (
+              <div
+                className="ruler-future"
+                style={{
+                  left: `${toRulerPercent(maxSelectableMinute)}%`,
+                  width: `${toRulerPercent(DAY_MINUTES - maxSelectableMinute)}%`,
+                }}
+              />
+            )}
+            <div
+              className={`backfill-selection ${draft.state}`}
+              style={{ left: `${selectionLeft}%`, width: `${selectionWidth}%` }}
+              onPointerDown={(event) => startBackfillDrag(event, "range")}
+            >
+              <button
+                type="button"
+                className="backfill-handle start"
+                aria-label="调整开始时间"
+                title="调整开始时间"
+                onPointerDown={(event) => startBackfillDrag(event, "start")}
+              />
+              <button
+                type="button"
+                className="backfill-handle end"
+                aria-label="调整结束时间"
+                title="调整结束时间"
+                onPointerDown={(event) => startBackfillDrag(event, "end")}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="backfill-fields">
+        <label>
+          类型
+          <select
+            value={draft.state}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, state: event.target.value as TrackableState }))
+            }
+          >
+            <option value="busy">忙碌</option>
+            <option value="rest">休息</option>
+          </select>
+        </label>
+        <label className="backfill-task">
+          内容
+          <input
+            value={draft.taskName}
+            placeholder={draft.state === "busy" ? "补记任务" : "休息内容"}
+            onChange={(event) => setDraft((current) => ({ ...current, taskName: event.target.value }))}
+          />
+        </label>
+        <label>
+          开始
+          <input
+            type="time"
+            step={RULER_STEP_MINUTES * 60}
+            value={timeInputValueFromMinute(draft.startMinute)}
+            max={timeInputValueFromMinute(latestStartMinute)}
+            disabled={maxSelectableMinute < RULER_STEP_MINUTES}
+            onChange={(event) => updateStartTime(event.target.value)}
+          />
+        </label>
+        <label>
+          结束
+          <input
+            type="time"
+            step={RULER_STEP_MINUTES * 60}
+            value={timeInputValueFromMinute(Math.min(draft.endMinute, DAY_MINUTES - RULER_STEP_MINUTES))}
+            min={timeInputValueFromMinute(RULER_STEP_MINUTES)}
+            max={timeInputValueFromMinute(latestEndInputMinute)}
+            disabled={maxSelectableMinute < RULER_STEP_MINUTES}
+            onChange={(event) => updateEndTime(event.target.value)}
+          />
+        </label>
+        <button type="submit" className="icon-button primary" disabled={!canSubmit}>
+          <Plus aria-hidden="true" />
+          <span>添加补记</span>
+        </button>
+        {message && <p className="inline-message">{message}</p>}
+      </div>
     </form>
   );
 }
@@ -946,8 +1333,52 @@ function TaskStatsList({
   );
 }
 
+function TimelineDateTimeInput({
+  isoDate,
+  selectedDate,
+  disabled = false,
+  title,
+  containerClassName = "",
+  onChange,
+}: {
+  isoDate: string | null;
+  selectedDate: string;
+  disabled?: boolean;
+  title: string;
+  containerClassName?: string;
+  onChange: (isoDate: string | null) => void;
+}) {
+  const usesSelectedDate = !isoDate || isIsoOnLocalDate(isoDate, selectedDate);
+  const value = isoDate ? (usesSelectedDate ? timeInputValueFromIso(isoDate) : toLocalInputValue(isoDate)) : "";
+
+  return (
+    <div className={`timeline-time-field ${usesSelectedDate ? "" : "is-cross-day"} ${containerClassName}`}>
+      <input
+        type={usesSelectedDate ? "time" : "datetime-local"}
+        step={usesSelectedDate ? RULER_STEP_MINUTES * 60 : undefined}
+        disabled={disabled}
+        value={value}
+        title={title}
+        onChange={(event) => {
+          if (!event.target.value) {
+            onChange(null);
+            return;
+          }
+
+          const nextIso = usesSelectedDate
+            ? isoFromLocalTimeInput(selectedDate, event.target.value)
+            : maybeFromLocalInputValue(event.target.value);
+          if (nextIso) onChange(nextIso);
+        }}
+      />
+      {!usesSelectedDate && <span className="cross-day-tag">跨日</span>}
+    </div>
+  );
+}
+
 function TimelineRow({
   segment,
+  selectedDate,
   previous,
   isActive,
   onUpdate,
@@ -956,6 +1387,7 @@ function TimelineRow({
   onDelete,
 }: {
   segment: TimelineSegment;
+  selectedDate: string;
   previous: TimelineSegment | null;
   isActive: boolean;
   onUpdate: (segment: TimelineSegment) => Promise<void>;
@@ -964,7 +1396,7 @@ function TimelineRow({
   onDelete: (segment: TimelineSegment) => Promise<void>;
 }) {
   const [draft, setDraft] = useState(segment);
-  const [splitAt, setSplitAt] = useState(() => midpointInputValue(segment));
+  const [splitAt, setSplitAt] = useState(() => midpointIso(segment));
   const canMerge = previous ? canMergeSegments(previous, segment) : false;
   const handleMerge = () => {
     if (!previous || !canMerge) return;
@@ -974,7 +1406,7 @@ function TimelineRow({
 
   useEffect(() => {
     setDraft(segment);
-    setSplitAt(midpointInputValue(segment));
+    setSplitAt(midpointIso(segment));
   }, [segment]);
 
   useEffect(() => {
@@ -1006,23 +1438,21 @@ function TimelineRow({
           placeholder={segment.state === "busy" ? UNMARKED_TASK : "休息内容"}
           onChange={(event) => setDraft((current) => ({ ...current, taskName: event.target.value }))}
         />
-        <input
-          type="datetime-local"
-          value={toLocalInputValue(draft.startedAt)}
-          onChange={(event) => {
-            const startedAt = maybeFromLocalInputValue(event.target.value);
+        <TimelineDateTimeInput
+          isoDate={draft.startedAt}
+          selectedDate={selectedDate}
+          title="开始时间"
+          onChange={(startedAt) => {
             if (!startedAt) return;
             setDraft((current) => ({ ...current, startedAt }));
           }}
         />
-        <input
-          type="datetime-local"
+        <TimelineDateTimeInput
+          isoDate={draft.endedAt}
+          selectedDate={selectedDate}
           disabled={isActive}
-          value={draft.endedAt ? toLocalInputValue(draft.endedAt) : ""}
-          onChange={(event) => {
-            const endedAt = event.target.value ? maybeFromLocalInputValue(event.target.value) : null;
-            setDraft((current) => ({ ...current, endedAt }));
-          }}
+          title="结束时间"
+          onChange={(endedAt) => setDraft((current) => ({ ...current, endedAt }))}
         />
       </div>
       <div className="timeline-meta">
@@ -1031,17 +1461,19 @@ function TimelineRow({
         {isActive && <span className="live-tag">进行中</span>}
       </div>
       <div className="row-actions">
-        <input
-          className="split-input"
-          type="datetime-local"
-          value={splitAt}
-          onChange={(event) => setSplitAt(event.target.value)}
+        <TimelineDateTimeInput
+          isoDate={splitAt}
+          selectedDate={selectedDate}
+          containerClassName="split-input"
           title="拆分时间点"
+          onChange={(nextSplitAt) => {
+            if (nextSplitAt) setSplitAt(nextSplitAt);
+          }}
         />
         <button
           type="button"
           className="icon-only"
-          onClick={() => void onSplit(segment, fromLocalInputValue(splitAt))}
+          onClick={() => void onSplit(segment, splitAt)}
           title="按时间点拆分"
         >
           <Scissors aria-hidden="true" />
@@ -1070,24 +1502,16 @@ function TimelineRow({
 }
 
 function createDefaultBackfillDraft(selectedDate: string): BackfillDraft {
-  const [year, month, day] = selectedDate.split("-").map(Number);
-  const dayStart = new Date(year, month - 1, day, 0, 0, 0, 0);
-  const dayEnd = new Date(year, month - 1, day, 23, 59, 0, 0);
-  const now = new Date();
-  now.setSeconds(0, 0);
-
-  let end = selectedDate === toDateInputValue(now) ? now : new Date(year, month - 1, day, 10, 0, 0, 0);
-  if (end.getTime() <= dayStart.getTime()) end = new Date(dayStart.getTime() + 30 * 60_000);
-  if (end.getTime() > dayEnd.getTime()) end = dayEnd;
-
-  let start = new Date(end.getTime() - 30 * 60_000);
-  if (start.getTime() < dayStart.getTime()) start = dayStart;
+  const maxSelectableMinute = getBackfillMaxMinute(selectedDate);
+  const defaultEndMinute =
+    selectedDate === toDateInputValue(new Date()) ? maxSelectableMinute : 10 * 60 + DEFAULT_BACKFILL_MINUTES;
+  const endMinute = clamp(snapMinute(defaultEndMinute), 0, maxSelectableMinute);
+  const startMinute = Math.max(0, endMinute - DEFAULT_BACKFILL_MINUTES);
 
   return {
     state: "busy",
     taskName: "",
-    startedAt: toLocalInputValue(start.toISOString()),
-    endedAt: toLocalInputValue(end.toISOString()),
+    ...clampBackfillSelection(startMinute, endMinute, maxSelectableMinute),
   };
 }
 
@@ -1118,16 +1542,131 @@ function formatSegmentRangeLabel(segment: TimelineSegment): string {
   }`;
 }
 
-function advanceBackfillDraft(current: BackfillDraft): BackfillDraft {
-  const startMs = new Date(current.endedAt).getTime();
-  if (!Number.isFinite(startMs)) return current;
+function advanceBackfillDraft(current: BackfillDraft, maxSelectableMinute: number): BackfillDraft {
+  const startMinute = clamp(current.endMinute, 0, Math.max(0, maxSelectableMinute - RULER_STEP_MINUTES));
+  const endMinute = Math.min(maxSelectableMinute, startMinute + DEFAULT_BACKFILL_MINUTES);
 
   return {
     ...current,
     taskName: "",
-    startedAt: toLocalInputValue(new Date(startMs).toISOString()),
-    endedAt: toLocalInputValue(new Date(startMs + 30 * 60_000).toISOString()),
+    ...clampBackfillSelection(startMinute, endMinute, maxSelectableMinute),
   };
+}
+
+function getBackfillMaxMinute(selectedDate: string): number {
+  const today = new Date();
+  if (selectedDate !== toDateInputValue(today)) return DAY_MINUTES;
+  return clamp(floorMinuteToStep(getLocalMinuteOfDay(today)), 0, DAY_MINUTES);
+}
+
+function clampBackfillSelection(
+  startMinute: number,
+  endMinute: number,
+  maxSelectableMinute: number,
+): Pick<BackfillDraft, "startMinute" | "endMinute"> {
+  const maxMinute = Math.max(0, snapMinute(maxSelectableMinute));
+  if (maxMinute < RULER_STEP_MINUTES) {
+    return { startMinute: 0, endMinute: 0 };
+  }
+
+  let nextStart = clamp(snapMinute(startMinute), 0, maxMinute - RULER_STEP_MINUTES);
+  let nextEnd = clamp(snapMinute(endMinute), RULER_STEP_MINUTES, maxMinute);
+
+  if (nextEnd <= nextStart) {
+    if (nextStart + RULER_STEP_MINUTES <= maxMinute) {
+      nextEnd = nextStart + RULER_STEP_MINUTES;
+    } else {
+      nextStart = Math.max(0, maxMinute - RULER_STEP_MINUTES);
+      nextEnd = maxMinute;
+    }
+  }
+
+  return {
+    startMinute: nextStart,
+    endMinute: nextEnd,
+  };
+}
+
+function getRulerSegmentBlock(segment: TimelineSegment, selectedDate: string): RulerSegmentBlock | null {
+  const dayStartMs = localDateFromKey(selectedDate).getTime();
+  const dayEndMs = dayStartMs + DAY_MINUTES * 60_000;
+  const startMs = Math.max(new Date(segment.startedAt).getTime(), dayStartMs);
+  const endMs = Math.min(new Date(segment.endedAt ?? new Date().toISOString()).getTime(), dayEndMs);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+
+  return {
+    id: segment.id,
+    state: segment.state,
+    startMinute: (startMs - dayStartMs) / 60_000,
+    endMinute: (endMs - dayStartMs) / 60_000,
+  };
+}
+
+function minuteFromClientX(clientX: number, element: HTMLElement, maxSelectableMinute: number): number {
+  const rect = element.getBoundingClientRect();
+  const ratio = rect.width > 0 ? clamp((clientX - rect.left) / rect.width, 0, 1) : 0;
+  return clamp(snapMinute(ratio * DAY_MINUTES), 0, maxSelectableMinute);
+}
+
+function minuteFromTimeInput(value: string): number | null {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return snapMinute(hours * 60 + minutes);
+}
+
+function isoFromLocalMinute(selectedDate: string, minute: number): string {
+  const date = localDateFromKey(selectedDate);
+  date.setMinutes(minute, 0, 0);
+  return date.toISOString();
+}
+
+function timeInputValueFromMinute(minute: number): string {
+  const safeMinute = clamp(Math.floor(minute), 0, DAY_MINUTES - RULER_STEP_MINUTES);
+  const hours = Math.floor(safeMinute / 60);
+  const minutes = safeMinute % 60;
+  return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
+}
+
+function formatMinuteLabel(minute: number): string {
+  if (minute >= DAY_MINUTES) return "24:00";
+  return timeInputValueFromMinute(minute);
+}
+
+function formatHourMark(minute: number): string {
+  if (minute >= DAY_MINUTES) return "24";
+  return `${Math.floor(minute / 60).toString().padStart(2, "0")}:00`;
+}
+
+function formatRulerZoomLabel(zoom: number): string {
+  return `${zoom.toFixed(zoom % 1 === 0 ? 0 : 1)}x`;
+}
+
+function toRulerPercent(minute: number): number {
+  return (minute / DAY_MINUTES) * 100;
+}
+
+function snapMinute(minute: number): number {
+  return Math.round(minute / RULER_STEP_MINUTES) * RULER_STEP_MINUTES;
+}
+
+function floorMinuteToStep(minute: number): number {
+  return Math.floor(minute / RULER_STEP_MINUTES) * RULER_STEP_MINUTES;
+}
+
+function getLocalMinuteOfDay(date: Date): number {
+  return date.getHours() * 60 + date.getMinutes();
+}
+
+function localDateFromKey(value: string): Date {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function formatDateTimeLabel(isoDate: string): string {
@@ -1168,10 +1707,10 @@ function durationFor(segment: TimelineSegment): number {
   return Math.max(0, Math.round((new Date(end).getTime() - new Date(segment.startedAt).getTime()) / 1000));
 }
 
-function midpointInputValue(segment: TimelineSegment): string {
+function midpointIso(segment: TimelineSegment): string {
   const end = segment.endedAt ?? new Date().toISOString();
   const midpoint = new Date((new Date(segment.startedAt).getTime() + new Date(end).getTime()) / 2);
-  return toLocalInputValue(midpoint.toISOString());
+  return midpoint.toISOString();
 }
 
 function toLocalInputValue(isoDate: string): string {
@@ -1185,10 +1724,17 @@ function maybeFromLocalInputValue(value: string): string | null {
   return Number.isFinite(time) ? new Date(time).toISOString() : null;
 }
 
-function fromLocalInputValue(value: string): string {
-  const isoDate = maybeFromLocalInputValue(value);
-  if (!isoDate) throw new Error("Invalid local date input.");
-  return isoDate;
+function isoFromLocalTimeInput(selectedDate: string, value: string): string | null {
+  const minute = minuteFromTimeInput(value);
+  return minute === null ? null : isoFromLocalMinute(selectedDate, minute);
+}
+
+function timeInputValueFromIso(isoDate: string): string {
+  return timeInputValueFromMinute(getLocalMinuteOfDay(new Date(isoDate)));
+}
+
+function isIsoOnLocalDate(isoDate: string, selectedDate: string): boolean {
+  return toDateInputValue(new Date(isoDate)) === selectedDate;
 }
 
 function normalizeTimelineDraft(segment: TimelineSegment): TimelineSegment | null {

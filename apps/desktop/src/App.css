@@ -483,16 +483,251 @@ button:focus-visible {
 
 .backfill-form {
   display: grid;
-  grid-template-columns: 120px minmax(160px, 1fr) 185px 185px auto;
-  gap: 10px;
-  align-items: end;
+  gap: 14px;
   margin-top: 16px;
   border-top: 1px solid #e4ebe9;
   border-bottom: 1px solid #e4ebe9;
   padding: 14px 0;
 }
 
-.backfill-form label {
+.backfill-ruler-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.backfill-ruler-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.backfill-ruler-head > div > strong {
+  display: block;
+  color: #172026;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.backfill-ruler-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 8px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #607077;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.legend-swatch {
+  width: 18px;
+  height: 8px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.legend-swatch.busy {
+  background: #e0a33a;
+}
+
+.legend-swatch.rest {
+  background: #48a971;
+}
+
+.legend-swatch.selection {
+  height: 10px;
+  border: 2px solid #0f766e;
+  background: rgba(15, 118, 110, 0.17);
+}
+
+.legend-swatch.selection.rest {
+  border-color: #277b85;
+  background: rgba(39, 123, 133, 0.18);
+}
+
+.backfill-ruler-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.backfill-ruler-tools > span {
+  border: 1px solid #cbdad6;
+  border-radius: 999px;
+  padding: 5px 9px;
+  color: #214046;
+  background: #f3faf7;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.ruler-zoom-label {
+  min-width: 34px;
+  color: #40525a;
+  font-size: 12px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.backfill-ruler-scroll {
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  padding: 4px 0 10px;
+  cursor: grab;
+  user-select: none;
+}
+
+.backfill-ruler-scroll.is-panning {
+  cursor: grabbing;
+}
+
+.backfill-ruler {
+  position: relative;
+  min-width: 960px;
+  height: 82px;
+  overflow: hidden;
+  border: 1px solid #d7e0dd;
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(247, 250, 249, 0.96)),
+    #fbfcfb;
+  cursor: inherit;
+  touch-action: none;
+}
+
+.backfill-ruler::before {
+  position: absolute;
+  top: 39px;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: #d9e4e1;
+  content: "";
+}
+
+.ruler-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 0;
+  width: 1px;
+  background: rgba(123, 139, 145, 0.18);
+  pointer-events: none;
+}
+
+.ruler-tick span {
+  position: absolute;
+  bottom: 7px;
+  left: 0;
+  transform: translateX(-50%);
+  color: #64747b;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.ruler-segment {
+  position: absolute;
+  top: 30px;
+  z-index: 1;
+  height: 22px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.42);
+  opacity: 0.88;
+  pointer-events: none;
+}
+
+.ruler-segment.busy {
+  background: #e0a33a;
+}
+
+.ruler-segment.rest {
+  background: #48a971;
+}
+
+.ruler-future {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(148, 163, 184, 0.13) 0,
+      rgba(148, 163, 184, 0.13) 8px,
+      rgba(248, 250, 252, 0.78) 8px,
+      rgba(248, 250, 252, 0.78) 16px
+    );
+  pointer-events: none;
+}
+
+.backfill-selection {
+  position: absolute;
+  top: 24px;
+  z-index: 3;
+  min-width: 14px;
+  height: 34px;
+  border: 2px solid #0f766e;
+  border-radius: 7px;
+  background: rgba(15, 118, 110, 0.17);
+  box-shadow: 0 8px 18px rgba(23, 32, 38, 0.12);
+  cursor: grab;
+}
+
+.backfill-selection.rest {
+  border-color: #277b85;
+  background: rgba(39, 123, 133, 0.18);
+}
+
+.backfill-selection:active {
+  cursor: grabbing;
+}
+
+.backfill-handle {
+  position: absolute;
+  top: -8px;
+  width: 16px;
+  height: 46px;
+  border: 2px solid #ffffff;
+  border-radius: 7px;
+  padding: 0;
+  background: #0f766e;
+  box-shadow: 0 5px 12px rgba(23, 32, 38, 0.18);
+  cursor: ew-resize;
+}
+
+.backfill-selection.rest .backfill-handle {
+  background: #277b85;
+}
+
+.backfill-handle.start {
+  left: -9px;
+}
+
+.backfill-handle.end {
+  right: -9px;
+}
+
+.backfill-fields {
+  display: grid;
+  grid-template-columns: 120px minmax(180px, 1fr) 120px 120px auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.backfill-fields label {
   display: grid;
   gap: 6px;
   color: #52636b;
@@ -502,6 +737,10 @@ button:focus-visible {
 
 .backfill-task {
   min-width: 0;
+}
+
+.backfill-fields .inline-message {
+  grid-column: 1 / -1;
 }
 
 .inline-message {
@@ -542,8 +781,35 @@ button:focus-visible {
 
 .timeline-fields {
   display: grid;
-  grid-template-columns: 110px minmax(130px, 1fr) 185px 185px;
+  grid-template-columns: 110px minmax(130px, 1fr) minmax(118px, 160px) minmax(118px, 160px);
   gap: 8px;
+}
+
+.timeline-time-field {
+  position: relative;
+  min-width: 0;
+}
+
+.timeline-time-field input {
+  height: 100%;
+}
+
+.timeline-time-field.is-cross-day input {
+  padding-right: 44px;
+}
+
+.cross-day-tag {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  padding: 1px 5px;
+  color: #6b4f10;
+  background: #fff3c4;
+  font-size: 11px;
+  font-weight: 900;
+  pointer-events: none;
 }
 
 .timeline-meta {
@@ -580,6 +846,10 @@ button:focus-visible {
 
 .split-input {
   width: 178px;
+}
+
+.split-input input {
+  width: 100%;
 }
 
 .settings-form {
@@ -934,6 +1204,10 @@ button:focus-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .backfill-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .data-actions,
   .row-actions,
   .reminder-actions {
@@ -975,8 +1249,13 @@ button:focus-visible {
   .timer-grid,
   .stat-list,
   .stat-list.expanded,
-  .timeline-fields {
+  .timeline-fields,
+  .backfill-fields {
     grid-template-columns: 1fr;
+  }
+
+  .backfill-ruler {
+    min-width: 760px;
   }
 
   .split-input {
