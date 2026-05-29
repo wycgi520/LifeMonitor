@@ -1182,6 +1182,7 @@ function MiniReminderWindow({
   statusTone: string;
   onExpand: () => void;
 }) {
+  const isIdle = monitor.state === "idle";
   const timerLabel = getTimerLabel(monitor);
   const timerValue = getTimerValue(monitor);
 
@@ -1236,11 +1237,17 @@ function MiniReminderWindow({
 
       {monitor.error && <p className="mini-error">{monitor.error}</p>}
 
-      <section className="mini-status-line" aria-live="polite">
-        <span className={`mini-state ${statusTone}`}>{stateLabels[monitor.state]}</span>
-        <span className="mini-caption">{timerLabel}</span>
-        <strong className="mini-timer">{timerValue}</strong>
-        <span className="mini-task-name">{monitor.snapshot.taskName ?? UNMARKED_TASK}</span>
+      <section className={`mini-status-line${isIdle ? " is-idle-compact" : ""}`} aria-live="polite">
+        <span className={`mini-state ${statusTone}`}>{isIdle ? "空闲中" : stateLabels[monitor.state]}</span>
+        {isIdle ? (
+          <span className="mini-caption mini-idle-note">暂时不用记录</span>
+        ) : (
+          <>
+            <span className="mini-caption">{timerLabel}</span>
+            <strong className="mini-timer">{timerValue}</strong>
+            <span className="mini-task-name">{monitor.snapshot.taskName ?? UNMARKED_TASK}</span>
+          </>
+        )}
         <button type="button" className="icon-only mini-expand" onClick={onExpand} title="展开完整界面">
           <Maximize2 aria-hidden="true" />
         </button>
@@ -1250,7 +1257,7 @@ function MiniReminderWindow({
         <input
           aria-label="活动内容"
           value={monitor.taskDraft}
-          placeholder="活动内容"
+          placeholder={isIdle ? "想记再填" : "活动内容"}
           onChange={(event) => monitor.setTaskDraft(event.target.value)}
         />
         <div className="mini-actions" aria-label="快捷操作">

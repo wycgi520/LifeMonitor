@@ -1011,6 +1011,11 @@ button:focus-visible {
     background 160ms ease;
 }
 
+.mini-status-line.is-idle-compact {
+  grid-template-columns: auto minmax(0, 1fr) 30px;
+  gap: 8px;
+}
+
 .mini-shell.busy .mini-status-line {
   border-color: #e8b16f;
   background: #fffaf1;
@@ -1067,6 +1072,11 @@ button:focus-visible {
 
 .mini-shell.is-due .mini-caption {
   color: #7c5d12;
+}
+
+.mini-idle-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .mini-expand {
