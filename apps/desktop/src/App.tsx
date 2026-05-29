@@ -106,6 +106,7 @@ function App() {
   const [windowMode, setWindowMode] = useState<AppWindowMode>(() => readWindowMode());
   const [activePage, setActivePage] = useState<PageId>("today");
   const importInputRef = useRef<HTMLInputElement>(null);
+  const alwaysOnTopRef = useRef(monitor.settings.alwaysOnTop);
   const [dataTransferMessage, setDataTransferMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -113,8 +114,24 @@ function App() {
   }, [monitor.settings]);
 
   useEffect(() => {
+    alwaysOnTopRef.current = monitor.settings.alwaysOnTop;
+  }, [monitor.settings.alwaysOnTop]);
+
+  useEffect(() => {
+    if (monitor.loading) return;
+    void syncAlwaysOnTopSetting(monitor.settings.alwaysOnTop);
+  }, [monitor.loading, monitor.settings.alwaysOnTop]);
+
+  useEffect(() => {
     window.localStorage.setItem(WINDOW_MODE_STORAGE_KEY, windowMode);
-    void syncWindowMode(windowMode);
+
+    const syncWindowModeAndTopmost = async () => {
+      await syncWindowMode(windowMode);
+      // Window style changes can reset the topmost flag on Windows.
+      await syncAlwaysOnTopSetting(alwaysOnTopRef.current);
+    };
+
+    void syncWindowModeAndTopmost();
   }, [windowMode]);
 
   const chronologicalSegments = useMemo(
@@ -141,6 +158,7 @@ function App() {
   };
 
   const updateAlwaysOnTop = (alwaysOnTop: boolean) => {
+    alwaysOnTopRef.current = alwaysOnTop;
     setSettingsDraft((current) => ({ ...current, alwaysOnTop }));
     void syncAlwaysOnTopSetting(alwaysOnTop);
   };
