@@ -1,5 +1,9 @@
 import type { LifeSettings } from "@lifemonitor/core";
-import type { LogicalSize as TauriLogicalSize } from "@tauri-apps/api/window";
+import type {
+  LogicalSize as TauriLogicalSize,
+  Monitor as TauriMonitor,
+  PhysicalSize as TauriPhysicalSize,
+} from "@tauri-apps/api/window";
 import { isTauriRuntime } from "./repository";
 
 type SaveSettings = (settings: LifeSettings) => Promise<void>;
@@ -105,29 +109,75 @@ export async function registerMiniWindowPositionTracking(): Promise<() => void> 
 }
 
 async function positionMiniWindow(size: TauriLogicalSize): Promise<void> {
+  const { getCurrentWindow, availableMonitors, currentMonitor, primaryMonitor, PhysicalPosition } = await import(
+    "@tauri-apps/api/window"
+  );
+  const appWindow = getCurrentWindow();
+  const monitors = await availableMonitors();
+  const fallbackMonitor = (await currentMonitor()) ?? (await primaryMonitor()) ?? monitors[0] ?? null;
   const savedPosition = loadMiniWindowPosition();
+
   if (savedPosition) {
-    const { getCurrentWindow, PhysicalPosition } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().setPosition(new PhysicalPosition(savedPosition.x, savedPosition.y));
-    return;
+    const monitor = findMonitorForPosition(savedPosition, monitors) ?? fallbackMonitor;
+    if (monitor) {
+      const nextPosition = clampPositionToWorkArea(savedPosition, size.toPhysical(monitor.scaleFactor), monitor.workArea);
+      await appWindow.setPosition(new PhysicalPosition(nextPosition.x, nextPosition.y));
+      saveMiniWindowPosition(nextPosition.x, nextPosition.y);
+      return;
+    }
   }
 
-  await positionMiniWindowAtTopRight(size);
+  if (!fallbackMonitor) return;
+
+  const nextPosition = getTopRightMiniWindowPosition(size, fallbackMonitor);
+  await appWindow.setPosition(new PhysicalPosition(nextPosition.x, nextPosition.y));
+  saveMiniWindowPosition(nextPosition.x, nextPosition.y);
 }
 
-async function positionMiniWindowAtTopRight(size: TauriLogicalSize): Promise<void> {
-  const { getCurrentWindow, currentMonitor, primaryMonitor, PhysicalPosition } = await import("@tauri-apps/api/window");
-  const appWindow = getCurrentWindow();
-  const monitor = (await currentMonitor()) ?? (await primaryMonitor());
-  if (!monitor) return;
-
+function getTopRightMiniWindowPosition(size: TauriLogicalSize, monitor: TauriMonitor): { x: number; y: number } {
   const physicalSize = size.toPhysical(monitor.scaleFactor);
   const physicalMargin = Math.round(MINI_WINDOW_MARGIN * monitor.scaleFactor);
   const workArea = monitor.workArea;
   const x = workArea.position.x + workArea.size.width - physicalSize.width - physicalMargin;
   const y = workArea.position.y + physicalMargin;
 
-  await appWindow.setPosition(new PhysicalPosition(Math.max(workArea.position.x, x), y));
+  return clampPositionToWorkArea({ x, y }, physicalSize, workArea);
+}
+
+function findMonitorForPosition(
+  position: { x: number; y: number },
+  monitors: TauriMonitor[],
+): TauriMonitor | null {
+  return (
+    monitors.find((monitor) => {
+      const workArea = monitor.workArea;
+      const left = workArea.position.x;
+      const top = workArea.position.y;
+      const right = left + workArea.size.width;
+      const bottom = top + workArea.size.height;
+      return position.x >= left && position.x < right && position.y >= top && position.y < bottom;
+    }) ?? null
+  );
+}
+
+function clampPositionToWorkArea(
+  position: { x: number; y: number },
+  size: TauriPhysicalSize,
+  workArea: TauriMonitor["workArea"],
+): { x: number; y: number } {
+  const minX = workArea.position.x;
+  const minY = workArea.position.y;
+  const maxX = Math.max(minX, workArea.position.x + workArea.size.width - size.width);
+  const maxY = Math.max(minY, workArea.position.y + workArea.size.height - size.height);
+
+  return {
+    x: Math.round(clamp(position.x, minX, maxX)),
+    y: Math.round(clamp(position.y, minY, maxY)),
+  };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function loadMiniWindowPosition(): { x: number; y: number } | null {
