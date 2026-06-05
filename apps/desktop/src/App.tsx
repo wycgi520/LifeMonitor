@@ -81,6 +81,13 @@ const stateLabels = {
   paused: "暂停",
 };
 
+const miniStateLabels = {
+  idle: "闲",
+  busy: "忙",
+  rest: "休",
+  paused: "停",
+};
+
 const trackableStateLabels: Record<TrackableState, string> = {
   busy: "忙碌",
   rest: "休息",
@@ -132,6 +139,14 @@ function App() {
     };
 
     void syncWindowModeAndTopmost();
+  }, [windowMode]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("mini-window-root", windowMode === "mini");
+
+    return () => {
+      document.documentElement.classList.remove("mini-window-root");
+    };
   }, [windowMode]);
 
   const chronologicalSegments = useMemo(
@@ -1188,8 +1203,12 @@ function MiniReminderWindow({
     ? `上一段：${trackableStateLabels[idleTimeoutNotice.state]} · ${idleTimeoutNotice.taskName ?? UNMARKED_TASK}`
     : null;
   const idleNoteText = previousStateText ?? "暂时不用记录";
-  const timerLabel = getTimerLabel(monitor);
-  const timerValue = getTimerValue(monitor);
+  const taskName = monitor.snapshot.taskName ?? UNMARKED_TASK;
+  const miniStateText = monitor.snapshot.isDue ? "超" : miniStateLabels[monitor.state];
+  const miniStatusTitle = isIdle
+    ? idleNoteText
+    : `${stateLabels[monitor.state]} · ${getFocusTimerStatus(monitor)} · ${taskName}`;
+  const miniTimerValue = getMiniTimerValue(monitor);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -1238,79 +1257,74 @@ function MiniReminderWindow({
 
   return (
     <main className={`app-shell mini-shell ${statusTone}`}>
-      <div className="mini-drag-region" onMouseDown={handleStartDrag} aria-hidden="true" />
+      <div className="mini-drag-region" onMouseDown={handleStartDrag} title="拖动窗口" aria-hidden="true">
+        <Grip aria-hidden="true" />
+      </div>
 
       {monitor.error && <p className="mini-error">{monitor.error}</p>}
 
-      <section className={`mini-status-line${isIdle ? " is-idle-compact" : ""}`} aria-live="polite">
-        {isIdle ? (
-          <>
-            <span className={`mini-state ${statusTone}`}>空闲中</span>
-            <span className="mini-caption mini-idle-note" title={idleNoteText}>
-              {idleNoteText}
-            </span>
-          </>
-        ) : (
-          <>
-            <span className={`mini-state ${statusTone}`}>{stateLabels[monitor.state]}</span>
-            <span className="mini-caption">{timerLabel}</span>
-            <strong className="mini-timer">{timerValue}</strong>
-            <span className="mini-task-name">{monitor.snapshot.taskName ?? UNMARKED_TASK}</span>
-          </>
-        )}
-        <button type="button" className="icon-only mini-expand" onClick={onExpand} title="展开完整界面">
-          <Maximize2 aria-hidden="true" />
-        </button>
+      <section className={`mini-status-chip ${statusTone}`} aria-live="polite" aria-label={miniStatusTitle} title={miniStatusTitle}>
+        <span className="mini-status-dot" aria-hidden="true" />
+        <span className="mini-state">{miniStateText}</span>
       </section>
 
-      <div className="mini-control-row">
-        <input
-          aria-label="活动内容"
-          value={monitor.taskDraft}
-          placeholder={isIdle ? "想记再填" : "活动内容"}
-          onChange={(event) => monitor.setTaskDraft(event.target.value)}
-        />
-        <div className="mini-actions" aria-label="快捷操作">
-          <button
-            type="button"
-            className="icon-only mini-action-button primary"
-            onClick={() => void monitor.startBusy()}
-            title="忙碌"
-            aria-label="忙碌"
-          >
-            <BriefcaseBusiness aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="icon-only mini-action-button rest"
-            onClick={() => void monitor.startRest()}
-            title="休息"
-            aria-label="休息"
-          >
-            <Coffee aria-hidden="true" />
-          </button>
+      <strong className="mini-timer" title={getFocusTimerStatus(monitor)}>
+        {miniTimerValue}
+      </strong>
+
+      <input
+        className="mini-task-input"
+        aria-label="活动内容"
+        value={monitor.taskDraft}
+        placeholder={isIdle ? "记" : "内容"}
+        title={isIdle ? idleNoteText : taskName}
+        onChange={(event) => monitor.setTaskDraft(event.target.value)}
+      />
+
+      <div className="mini-actions" aria-label="快捷操作">
+        <button
+          type="button"
+          className="icon-only mini-action-button primary"
+          onClick={() => void monitor.startBusy()}
+          title="忙碌"
+          aria-label="忙碌"
+        >
+          <BriefcaseBusiness aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="icon-only mini-action-button rest"
+          onClick={() => void monitor.startRest()}
+          title="休息"
+          aria-label="休息"
+        >
+          <Coffee aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="icon-only mini-action-button"
+          onClick={pauseAction.onClick}
+          title={pauseAction.title}
+          aria-label={pauseAction.label}
+        >
+          {pauseAction.icon}
+        </button>
+        {monitor.timeoutNotice && (
           <button
             type="button"
             className="icon-only mini-action-button"
-            onClick={pauseAction.onClick}
-            title={pauseAction.title}
-            aria-label={pauseAction.label}
+            onClick={() => void monitor.extendTimeoutNoticeToNow()}
+            title="把刚刚结束的状态补到现在"
+            aria-label="补到现在"
           >
-            {pauseAction.icon}
+            <Clock3 aria-hidden="true" />
           </button>
-          {monitor.timeoutNotice && (
-            <button
-              type="button"
-              className="icon-only mini-action-button"
-              onClick={() => void monitor.extendTimeoutNoticeToNow()}
-              title="把刚刚结束的状态补到现在"
-              aria-label="补到现在"
-            >
-              <Clock3 aria-hidden="true" />
-            </button>
-          )}
-        </div>
+        )}
+        <button type="button" className="icon-only mini-action-button mini-expand" onClick={onExpand} title="展开完整界面">
+          <Maximize2 aria-hidden="true" />
+        </button>
       </div>
+
       <button type="button" className="mini-resize-handle" onMouseDown={handleStartResize} title="调整窗口大小">
         <Grip aria-hidden="true" />
         <span className="sr-only">调整窗口大小</span>
@@ -1852,17 +1866,22 @@ function percentage(value: number, total: number): number {
   return Math.round((value / total) * 100);
 }
 
-function getTimerLabel(monitor: MonitorController): string {
-  if (monitor.state === "idle") return "未计时";
-  if (monitor.state === "paused") return "已暂停";
-  return monitor.snapshot.isDue ? "多用" : "剩余";
+function getMiniTimerValue(monitor: MonitorController): string {
+  if (monitor.state === "idle") return "[--]";
+  if (monitor.state === "paused") return "[停]";
+
+  const seconds = monitor.snapshot.isDue ? monitor.snapshot.overtimeSeconds : monitor.snapshot.remainingSeconds;
+  return `[${formatMiniDuration(seconds)}]`;
 }
 
-function getTimerValue(monitor: MonitorController): string {
-  if (monitor.state === "idle" || monitor.state === "paused") return "0秒";
-  return monitor.snapshot.isDue
-    ? formatDuration(monitor.snapshot.overtimeSeconds)
-    : formatDuration(monitor.snapshot.remainingSeconds);
+function formatMiniDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const restSeconds = seconds % 60;
+
+  if (hours > 0) return `${hours}:${minutes.toString().padStart(2, "0")}`;
+  return `${minutes}:${restSeconds.toString().padStart(2, "0")}`;
 }
 
 function getFocusTimerStatus(monitor: MonitorController): string {
