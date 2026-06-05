@@ -1183,6 +1183,11 @@ function MiniReminderWindow({
   onExpand: () => void;
 }) {
   const isIdle = monitor.state === "idle";
+  const idleTimeoutNotice = isIdle ? monitor.timeoutNotice : null;
+  const previousStateText = idleTimeoutNotice
+    ? `上一段：${trackableStateLabels[idleTimeoutNotice.state]} · ${idleTimeoutNotice.taskName ?? UNMARKED_TASK}`
+    : null;
+  const idleNoteText = previousStateText ?? "暂时不用记录";
   const timerLabel = getTimerLabel(monitor);
   const timerValue = getTimerValue(monitor);
 
@@ -1238,11 +1243,16 @@ function MiniReminderWindow({
       {monitor.error && <p className="mini-error">{monitor.error}</p>}
 
       <section className={`mini-status-line${isIdle ? " is-idle-compact" : ""}`} aria-live="polite">
-        <span className={`mini-state ${statusTone}`}>{isIdle ? "空闲中" : stateLabels[monitor.state]}</span>
         {isIdle ? (
-          <span className="mini-caption mini-idle-note">暂时不用记录</span>
+          <>
+            <span className={`mini-state ${statusTone}`}>空闲中</span>
+            <span className="mini-caption mini-idle-note" title={idleNoteText}>
+              {idleNoteText}
+            </span>
+          </>
         ) : (
           <>
+            <span className={`mini-state ${statusTone}`}>{stateLabels[monitor.state]}</span>
             <span className="mini-caption">{timerLabel}</span>
             <strong className="mini-timer">{timerValue}</strong>
             <span className="mini-task-name">{monitor.snapshot.taskName ?? UNMARKED_TASK}</span>
