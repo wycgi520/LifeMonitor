@@ -11,10 +11,13 @@ import {
   getTargetMinutes,
   getLocalDayRange,
   mergeSegments,
+  normalizeNote,
   normalizeTaskName,
   splitSegmentAt,
   type LifeSettings,
   type LifeState,
+  type SummaryEntry,
+  type SummaryScope,
   type TimelineSegment,
   type TodayStats,
   type TrackableState,
@@ -34,6 +37,7 @@ interface PausedContext {
 interface ManualSegmentInput {
   state: TrackableState;
   taskName: string | null;
+  note?: string | null;
   startedAt: string;
   endedAt: string;
 }
@@ -52,6 +56,7 @@ export interface LifeMonitorController {
   state: LifeState;
   settings: LifeSettings;
   selectedDate: string;
+  selectedWeekKey: string;
   isViewingToday: boolean;
   taskDraft: string;
   setTaskDraft: (value: string) => void;
@@ -61,6 +66,8 @@ export interface LifeMonitorController {
   goToToday: () => void;
   segments: TimelineSegment[];
   activeSegment: TimelineSegment | null;
+  daySummary: SummaryEntry | null;
+  weekSummary: SummaryEntry | null;
   stats: TodayStats;
   snapshot: ReturnType<typeof deriveTimerSnapshot>;
   timeoutNotice: TimeoutNotice | null;
@@ -69,10 +76,12 @@ export interface LifeMonitorController {
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   changeTask: (taskName: string | null) => Promise<void>;
+  changeActiveNote: (note: string | null) => Promise<void>;
   extend: (minutes: number) => Promise<void>;
   extendTimeoutNoticeToNow: () => Promise<void>;
   dismissTimeoutNotice: () => void;
   saveSettings: (settings: LifeSettings) => Promise<void>;
+  saveSummary: (scope: SummaryScope, content: string) => Promise<void>;
   addManualSegment: (input: ManualSegmentInput) => Promise<boolean>;
   updateSegment: (segment: TimelineSegment) => Promise<void>;
   splitSegment: (segment: TimelineSegment, splitAtIso: string) => Promise<void>;
@@ -92,6 +101,8 @@ export function useLifeMonitor(): LifeMonitorController {
   const [isTaskDraftUserEdited, setIsTaskDraftUserEdited] = useState(false);
   const [segments, setSegments] = useState<TimelineSegment[]>([]);
   const [activeSegment, setActiveSegment] = useState<TimelineSegment | null>(null);
+  const [daySummary, setDaySummary] = useState<SummaryEntry | null>(null);
+  const [weekSummary, setWeekSummary] = useState<SummaryEntry | null>(null);
   const [pausedContext, setPausedContext] = useState<PausedContext | null>(null);
   const [timeoutNotice, setTimeoutNotice] = useState<TimeoutNotice | null>(null);
   const [notifiedRunIds, setNotifiedRunIds] = useState<Set<string>>(() => new Set());
@@ -105,6 +116,7 @@ export function useLifeMonitor(): LifeMonitorController {
   const settingsRef = useRef<LifeSettings>(DEFAULT_SETTINGS);
 
   const selectedDayRange = useMemo(() => getDayRangeForDateKey(selectedDate), [selectedDate]);
+  const selectedWeekKey = useMemo(() => getWeekKeyForDateKey(selectedDate), [selectedDate]);
   const todayKey = useMemo(() => toLocalDateKey(new Date(nowIso)), [nowIso]);
   const isViewingToday = selectedDate === todayKey;
 
@@ -211,6 +223,26 @@ export function useLifeMonitor(): LifeMonitorController {
       disposed = true;
     };
   }, [repository, selectedDayRange.endIso, selectedDayRange.startIso]);
+
+  useEffect(() => {
+    if (!repository) return;
+
+    let disposed = false;
+    void Promise.all([repository.loadSummary("day", selectedDate), repository.loadSummary("week", selectedWeekKey)])
+      .then(([nextDaySummary, nextWeekSummary]) => {
+        if (disposed) return;
+        setDaySummary(nextDaySummary);
+        setWeekSummary(nextWeekSummary);
+        setError(null);
+      })
+      .catch((caught) => {
+        if (!disposed) setError(caught instanceof Error ? caught.message : String(caught));
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [repository, selectedDate, selectedWeekKey]);
 
   useEffect(() => {
     if (!repository) return;
@@ -348,6 +380,15 @@ export function useLifeMonitor(): LifeMonitorController {
       const isContinuingState = activeSegment?.state === nextState;
 
       await persistAndRefresh(async (repo) => {
+        if (timeoutNotice && !activeSegment) {
+          await repo.updateSegment({
+            ...timeoutNotice.segment,
+            endedAt: now,
+            updatedAt: now,
+            isEdited: true,
+          });
+          setTimeoutNotice(null);
+        }
         await closeCurrent(repo, now);
         const draftTask = taskName === undefined && !isTaskDraftUserEdited ? null : normalizeTaskName(taskName ?? taskDraft);
         const normalizedTask = draftTask ?? (await repo.getLatestTaskName(nextState));
@@ -367,7 +408,15 @@ export function useLifeMonitor(): LifeMonitorController {
         setTimeoutNotice(null);
       });
     },
-    [activeSegment, closeCurrent, isTaskDraftUserEdited, persistAndRefresh, setTaskDraftFromSystem, taskDraft],
+    [
+      activeSegment,
+      closeCurrent,
+      isTaskDraftUserEdited,
+      persistAndRefresh,
+      setTaskDraftFromSystem,
+      taskDraft,
+      timeoutNotice,
+    ],
   );
 
   const startBusy = useCallback(
@@ -493,12 +542,10 @@ export function useLifeMonitor(): LifeMonitorController {
       const updatedSegment = {
         ...timeoutNotice.segment,
         endedAt: now,
-        plannedEndAt: now,
         updatedAt: now,
         isEdited: true,
       };
 
-      await repo.updateRunPlannedEnd(timeoutNotice.runId, now, now);
       await repo.updateSegment(updatedSegment);
       setTimeoutNotice(null);
     });
@@ -573,6 +620,7 @@ export function useLifeMonitor(): LifeMonitorController {
       const updated = {
         ...segment,
         taskName: normalizeTaskName(segment.taskName),
+        note: normalizeNote(segment.note),
         updatedAt: new Date().toISOString(),
         isEdited: true,
       };
@@ -605,6 +653,51 @@ export function useLifeMonitor(): LifeMonitorController {
       });
     },
     [activeSegment, persistAndRefresh, setTaskDraftFromSystem],
+  );
+
+  const changeActiveNote = useCallback(
+    async (note: string | null) => {
+      if (!activeSegment) return;
+      const now = new Date().toISOString();
+      const updated = {
+        ...activeSegment,
+        note: normalizeNote(note),
+        updatedAt: now,
+        isEdited: true,
+      };
+
+      await persistAndRefresh(async (repo) => {
+        await repo.updateSegment(updated);
+        setActiveSegment(updated);
+      });
+    },
+    [activeSegment, persistAndRefresh],
+  );
+
+  const saveSummary = useCallback(
+    async (scope: SummaryScope, content: string) => {
+      if (!repository) return;
+
+      const summary: SummaryEntry = {
+        scope,
+        key: scope === "day" ? selectedDate : selectedWeekKey,
+        content: content.trim(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      try {
+        await repository.saveSummary(summary);
+        if (scope === "day") {
+          setDaySummary(summary);
+        } else {
+          setWeekSummary(summary);
+        }
+        setError(null);
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+      }
+    },
+    [repository, selectedDate, selectedWeekKey],
   );
 
   const splitSegment = useCallback(
@@ -682,6 +775,8 @@ export function useLifeMonitor(): LifeMonitorController {
         setExtensionMinutesByRun({});
         settlingRunIds.current.clear();
         setSegments(await repository.listSegments(selectedDayRange.startIso, selectedDayRange.endIso));
+        setDaySummary(await repository.loadSummary("day", selectedDate));
+        setWeekSummary(await repository.loadSummary("week", selectedWeekKey));
         await syncPlatformSettings(nextSettings);
         setError(null);
         return data;
@@ -690,7 +785,14 @@ export function useLifeMonitor(): LifeMonitorController {
         throw caught;
       }
     },
-    [repository, selectedDayRange.endIso, selectedDayRange.startIso, setTaskDraftFromSystem],
+    [
+      repository,
+      selectedDate,
+      selectedDayRange.endIso,
+      selectedDayRange.startIso,
+      selectedWeekKey,
+      setTaskDraftFromSystem,
+    ],
   );
 
   return {
@@ -699,6 +801,7 @@ export function useLifeMonitor(): LifeMonitorController {
     state,
     settings,
     selectedDate,
+    selectedWeekKey,
     isViewingToday,
     taskDraft,
     setTaskDraft,
@@ -708,6 +811,8 @@ export function useLifeMonitor(): LifeMonitorController {
     goToToday,
     segments,
     activeSegment,
+    daySummary,
+    weekSummary,
     stats,
     snapshot,
     timeoutNotice,
@@ -716,10 +821,12 @@ export function useLifeMonitor(): LifeMonitorController {
     pause,
     resume,
     changeTask,
+    changeActiveNote,
     extend,
     extendTimeoutNoticeToNow,
     dismissTimeoutNotice,
     saveSettings,
+    saveSummary,
     addManualSegment,
     updateSegment,
     splitSegment,
@@ -754,6 +861,14 @@ function getDayRangeForDateKey(value: string): { startIso: string; endIso: strin
 function shiftLocalDateKey(value: string, days: number): string {
   const date = dateFromLocalDateKey(value);
   date.setDate(date.getDate() + days);
+  return toLocalDateKey(date);
+}
+
+function getWeekKeyForDateKey(value: string): string {
+  const date = dateFromLocalDateKey(value);
+  const day = date.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + mondayOffset);
   return toLocalDateKey(date);
 }
 

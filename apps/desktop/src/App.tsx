@@ -188,7 +188,7 @@ function App() {
       const data = await monitor.exportData();
       const fileName = `lifemonitor-${toDateInputValue(new Date())}.json`;
       const exportLocation = await saveJsonExport(data, fileName);
-      setDataTransferMessage(`已导出 ${data.segments.length} 条记录到：${exportLocation}`);
+      setDataTransferMessage(`已导出 ${data.segments.length} 条记录、${data.summaries.length} 条总结到：${exportLocation}`);
     } catch (caught) {
       setDataTransferMessage(caught instanceof Error ? caught.message : String(caught));
     }
@@ -206,7 +206,7 @@ function App() {
 
     try {
       const data = await monitor.importData(await file.text());
-      setDataTransferMessage(`已导入 ${data.segments.length} 条记录。`);
+      setDataTransferMessage(`已导入 ${data.segments.length} 条记录、${data.summaries.length} 条总结。`);
       setActivePage("timeline");
     } catch (caught) {
       setDataTransferMessage(caught instanceof Error ? caught.message : String(caught));
@@ -405,6 +405,15 @@ function TodayPage({ monitor }: { monitor: MonitorController }) {
         <div className="stat-list compact">
           <Metric label="忙碌总时长" value={formatDuration(monitor.stats.busySeconds)} />
           <Metric label="休息总时长" value={formatDuration(monitor.stats.restSeconds)} />
+          <Metric label="番茄钟" value={`${monitor.stats.totalPomodoroCount} 个`} />
+          <Metric
+            label="超时"
+            value={formatDuration(monitor.stats.overtimeBusySeconds + monitor.stats.overtimeRestSeconds)}
+          />
+          <Metric
+            label="时间不足"
+            value={formatDuration(monitor.stats.undertimeBusySeconds + monitor.stats.undertimeRestSeconds)}
+          />
           <Metric label="待补记忙碌" value={formatDuration(monitor.stats.unmarkedSeconds)} />
         </div>
         <TaskStatsList tasks={monitor.stats.taskStats.slice(0, 4)} emptyText="今天还没有忙碌记录" />
@@ -447,6 +456,8 @@ function FocusPanel({ monitor }: { monitor: MonitorController }) {
         </div>
       </div>
 
+      <ActiveNoteEditor monitor={monitor} />
+
       {monitor.settings.quickTasks.length > 0 && (
         <div className="quick-tasks">
           {monitor.settings.quickTasks.map((task) => (
@@ -487,6 +498,34 @@ function FocusPanel({ monitor }: { monitor: MonitorController }) {
         </button>
       </div>
     </section>
+  );
+}
+
+function ActiveNoteEditor({ monitor }: { monitor: MonitorController }) {
+  const [note, setNote] = useState(monitor.activeSegment?.note ?? "");
+  const canEdit = Boolean(monitor.activeSegment);
+
+  useEffect(() => {
+    setNote(monitor.activeSegment?.note ?? "");
+  }, [monitor.activeSegment?.id, monitor.activeSegment?.note]);
+
+  const saveNote = () => {
+    if (!canEdit) return;
+    void monitor.changeActiveNote(note);
+  };
+
+  return (
+    <label className="note-editor">
+      备注
+      <textarea
+        value={note}
+        disabled={!canEdit}
+        placeholder={canEdit ? "这段时间的细节" : "开始忙碌或休息后可记录"}
+        rows={3}
+        onChange={(event) => setNote(event.target.value)}
+        onBlur={saveNote}
+      />
+    </label>
   );
 }
 
@@ -549,6 +588,7 @@ function TimelinePage({
 interface BackfillDraft {
   state: TrackableState;
   taskName: string;
+  note: string;
   startMinute: number;
   endMinute: number;
 }
@@ -804,6 +844,7 @@ function BackfillPanel({ monitor }: { monitor: MonitorController }) {
     const added = await monitor.addManualSegment({
       state: draft.state,
       taskName: draft.taskName,
+      note: draft.note,
       startedAt: isoFromLocalMinute(monitor.selectedDate, range.startMinute),
       endedAt: isoFromLocalMinute(monitor.selectedDate, range.endMinute),
     });
@@ -957,6 +998,15 @@ function BackfillPanel({ monitor }: { monitor: MonitorController }) {
             onChange={(event) => setDraft((current) => ({ ...current, taskName: event.target.value }))}
           />
         </label>
+        <label className="backfill-note">
+          备注
+          <textarea
+            value={draft.note}
+            placeholder="补记备注"
+            rows={2}
+            onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))}
+          />
+        </label>
         <label>
           开始
           <input
@@ -1007,11 +1057,33 @@ function StatsPage({ monitor, selectedDateLabel }: { monitor: MonitorController;
         <div className="stat-list expanded">
           <Metric label="忙碌总时长" value={formatDuration(monitor.stats.busySeconds)} />
           <Metric label="休息总时长" value={formatDuration(monitor.stats.restSeconds)} />
+          <Metric label="忙碌番茄" value={`${monitor.stats.busyPomodoroCount} 个`} />
+          <Metric label="休息番茄" value={`${monitor.stats.restPomodoroCount} 个`} />
+          <Metric label="番茄合计" value={`${monitor.stats.totalPomodoroCount} 个`} />
           <Metric label="超时忙碌" value={formatDuration(monitor.stats.overtimeBusySeconds)} />
           <Metric label="超时休息" value={formatDuration(monitor.stats.overtimeRestSeconds)} />
+          <Metric label="忙碌不足" value={formatDuration(monitor.stats.undertimeBusySeconds)} />
+          <Metric label="休息不足" value={formatDuration(monitor.stats.undertimeRestSeconds)} />
           <Metric label="待补记忙碌" value={formatDuration(monitor.stats.unmarkedSeconds)} />
         </div>
       </section>
+
+      <div className="summary-layout">
+        <SummaryEditor
+          title="本日总结"
+          subtitle={selectedDateLabel}
+          content={monitor.daySummary?.content ?? ""}
+          updatedAt={monitor.daySummary?.updatedAt ?? null}
+          onSave={(content) => monitor.saveSummary("day", content)}
+        />
+        <SummaryEditor
+          title="本周总结"
+          subtitle={`周一 ${monitor.selectedWeekKey}`}
+          content={monitor.weekSummary?.content ?? ""}
+          updatedAt={monitor.weekSummary?.updatedAt ?? null}
+          onSave={(content) => monitor.saveSummary("week", content)}
+        />
+      </div>
 
       <div className="analysis-layout">
         <section className="stats-panel">
@@ -1038,6 +1110,48 @@ function StatsPage({ monitor, selectedDateLabel }: { monitor: MonitorController;
         </section>
       </div>
     </section>
+  );
+}
+
+function SummaryEditor({
+  title,
+  subtitle,
+  content,
+  updatedAt,
+  onSave,
+}: {
+  title: string;
+  subtitle: string;
+  content: string;
+  updatedAt: string | null;
+  onSave: (content: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(content);
+
+  useEffect(() => {
+    setDraft(content);
+  }, [content]);
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    void onSave(draft);
+  };
+
+  return (
+    <form className="stats-panel summary-editor" onSubmit={submit}>
+      <div className="panel-head">
+        <div>
+          <p className="eyebrow">{subtitle}</p>
+          <h2>{title}</h2>
+        </div>
+        {updatedAt && <span className="summary-updated">{formatDateTimeLabel(updatedAt)}</span>}
+      </div>
+      <textarea value={draft} rows={5} onChange={(event) => setDraft(event.target.value)} />
+      <button type="submit" className="icon-button primary">
+        <Save aria-hidden="true" />
+        <span>保存总结</span>
+      </button>
+    </form>
   );
 }
 
@@ -1507,6 +1621,13 @@ function TimelineRow({
           placeholder={segment.state === "busy" ? UNMARKED_TASK : "休息内容"}
           onChange={(event) => setDraft((current) => ({ ...current, taskName: event.target.value }))}
         />
+        <textarea
+          className="timeline-note"
+          value={draft.note ?? ""}
+          placeholder="备注"
+          rows={2}
+          onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))}
+        />
         <TimelineDateTimeInput
           isoDate={draft.startedAt}
           selectedDate={selectedDate}
@@ -1527,6 +1648,12 @@ function TimelineRow({
       <div className="timeline-meta">
         <span>{trackableStateLabels[segment.state]}</span>
         <strong>{formatDuration(durationFor(segment))}</strong>
+        {segmentOvertimeSeconds(segment) > 0 && (
+          <span className="time-delta overtime">超时 {formatDuration(segmentOvertimeSeconds(segment))}</span>
+        )}
+        {segmentUndertimeSeconds(segment) > 0 && (
+          <span className="time-delta undertime">不足 {formatDuration(segmentUndertimeSeconds(segment))}</span>
+        )}
         {isActive && <span className="live-tag">进行中</span>}
       </div>
       <div className="row-actions">
@@ -1580,6 +1707,7 @@ function createDefaultBackfillDraft(selectedDate: string): BackfillDraft {
   return {
     state: "busy",
     taskName: "",
+    note: "",
     ...clampBackfillSelection(startMinute, endMinute, maxSelectableMinute),
   };
 }
@@ -1618,6 +1746,7 @@ function advanceBackfillDraft(current: BackfillDraft, maxSelectableMinute: numbe
   return {
     ...current,
     taskName: "",
+    note: "",
     ...clampBackfillSelection(startMinute, endMinute, maxSelectableMinute),
   };
 }
@@ -1776,6 +1905,19 @@ function durationFor(segment: TimelineSegment): number {
   return Math.max(0, Math.round((new Date(end).getTime() - new Date(segment.startedAt).getTime()) / 1000));
 }
 
+function segmentOvertimeSeconds(segment: TimelineSegment): number {
+  const end = segment.endedAt ?? new Date().toISOString();
+  return Math.max(0, Math.round((new Date(end).getTime() - new Date(segment.plannedEndAt).getTime()) / 1000));
+}
+
+function segmentUndertimeSeconds(segment: TimelineSegment): number {
+  if (!segment.endedAt) return 0;
+  return Math.max(
+    0,
+    Math.round((new Date(segment.plannedEndAt).getTime() - new Date(segment.endedAt).getTime()) / 1000),
+  );
+}
+
 function midpointIso(segment: TimelineSegment): string {
   const end = segment.endedAt ?? new Date().toISOString();
   const midpoint = new Date((new Date(segment.startedAt).getTime() + new Date(end).getTime()) / 2);
@@ -1822,6 +1964,7 @@ function hasTimelineDraftChanges(draft: TimelineSegment, segment: TimelineSegmen
   return (
     draft.state !== segment.state ||
     draft.taskName !== segment.taskName ||
+    draft.note !== segment.note ||
     draft.startedAt !== segment.startedAt ||
     draft.endedAt !== segment.endedAt
   );

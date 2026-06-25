@@ -2,8 +2,11 @@ import {
   addMinutes,
   DEFAULT_SETTINGS,
   getTargetMinutes,
+  normalizeNote,
   normalizeTaskName,
   type LifeSettings,
+  type SummaryEntry,
+  type SummaryScope,
   type TimelineSegment,
   type TrackableState,
 } from "@lifemonitor/core";
@@ -14,6 +17,8 @@ export interface LifeRepository {
   getLatestTaskName(state: TrackableState): Promise<string | null>;
   exportData(): Promise<LifeDataExport>;
   replaceData(data: LifeDataExport): Promise<void>;
+  loadSummary(scope: SummaryScope, key: string): Promise<SummaryEntry | null>;
+  saveSummary(summary: SummaryEntry): Promise<void>;
   listSegments(startIso: string, endIso: string): Promise<TimelineSegment[]>;
   getOpenSegment(): Promise<TimelineSegment | null>;
   insertSegment(segment: TimelineSegment): Promise<void>;
@@ -25,19 +30,21 @@ export interface LifeRepository {
 interface StoredData {
   settings: LifeSettings;
   segments: TimelineSegment[];
+  summaries: SummaryEntry[];
 }
 
 export interface LifeDataExport {
   app: "LifeMonitor";
-  version: 1;
+  version: 2;
   exportedAt: string;
   settings: LifeSettings;
   segments: TimelineSegment[];
+  summaries: SummaryEntry[];
 }
 
 const STORAGE_KEY = "lifemonitor:data:v1";
 const EXPORT_APP = "LifeMonitor";
-const EXPORT_VERSION = 1;
+const EXPORT_VERSION = 2;
 
 export async function createRepository(): Promise<LifeRepository> {
   if (isTauriRuntime()) {
@@ -82,7 +89,21 @@ class LocalStorageRepository implements LifeRepository {
     this.write({
       settings: data.settings,
       segments: sortSegments(data.segments),
+      summaries: sortSummaries(data.summaries),
     });
+  }
+
+  async loadSummary(scope: SummaryScope, key: string): Promise<SummaryEntry | null> {
+    return this.read().summaries.find((summary) => summary.scope === scope && summary.key === key) ?? null;
+  }
+
+  async saveSummary(summary: SummaryEntry): Promise<void> {
+    const data = this.read();
+    data.summaries = [
+      ...data.summaries.filter((item) => item.scope !== summary.scope || item.key !== summary.key),
+      normalizeImportedSummary(summary, data.summaries.length),
+    ];
+    this.write(data);
   }
 
   async listSegments(startIso: string, endIso: string): Promise<TimelineSegment[]> {
@@ -134,6 +155,7 @@ class LocalStorageRepository implements LifeRepository {
     const fallback: StoredData = {
       settings: DEFAULT_SETTINGS,
       segments: [],
+      summaries: [],
     };
 
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -141,9 +163,15 @@ class LocalStorageRepository implements LifeRepository {
 
     try {
       const parsed = JSON.parse(raw) as Partial<StoredData>;
+      const settings = normalizeImportedSettings(parsed.settings);
       return {
-        settings: normalizeImportedSettings(parsed.settings),
-        segments: parsed.segments ?? [],
+        settings,
+        segments: Array.isArray(parsed.segments)
+          ? sortSegments(parsed.segments.map((segment, index) => normalizeImportedSegment(segment, index, settings)))
+          : [],
+        summaries: Array.isArray(parsed.summaries)
+          ? sortSummaries(parsed.summaries.map((summary, index) => normalizeImportedSummary(summary, index)))
+          : [],
       };
     } catch {
       return fallback;
@@ -198,6 +226,7 @@ class TauriSqlRepository implements LifeRepository {
     return buildDataExport({
       settings: await this.loadSettings(),
       segments: rows.map(rowToSegment),
+      summaries: await this.listSummaries(),
     });
   }
 
@@ -206,10 +235,14 @@ class TauriSqlRepository implements LifeRepository {
 
     try {
       await this.db.execute("DELETE FROM timeline_segments");
+      await this.db.execute("DELETE FROM summaries");
       await this.db.execute("DELETE FROM settings");
       await this.saveSettings(data.settings);
       for (const segment of sortSegments(data.segments)) {
         await this.insertSegment(segment);
+      }
+      for (const summary of sortSummaries(data.summaries)) {
+        await this.saveSummary(summary);
       }
       await this.db.execute("COMMIT");
     } catch (error) {
@@ -230,6 +263,24 @@ class TauriSqlRepository implements LifeRepository {
     return rows.map(rowToSegment);
   }
 
+  async loadSummary(scope: SummaryScope, key: string): Promise<SummaryEntry | null> {
+    const rows = await this.db.select<SummaryRow[]>(
+      "SELECT * FROM summaries WHERE scope = $1 AND summary_key = $2 LIMIT 1",
+      [scope, key],
+    );
+    return rows[0] ? rowToSummary(rows[0]) : null;
+  }
+
+  async saveSummary(summary: SummaryEntry): Promise<void> {
+    await this.db.execute(
+      `INSERT INTO summaries (scope, summary_key, content, updated_at)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT(scope, summary_key)
+        DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
+      summaryToParams(normalizeImportedSummary(summary, 0)),
+    );
+  }
+
   async getOpenSegment(): Promise<TimelineSegment | null> {
     const rows = await this.db.select<SegmentRow[]>(
       "SELECT * FROM timeline_segments WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
@@ -240,9 +291,9 @@ class TauriSqlRepository implements LifeRepository {
   async insertSegment(segment: TimelineSegment): Promise<void> {
     await this.db.execute(
       `INSERT INTO timeline_segments (
-        id, state_run_id, state, task_name, started_at, ended_at,
+        id, state_run_id, state, task_name, note, started_at, ended_at,
         planned_end_at, created_at, updated_at, is_edited
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       segmentToParams(segment),
     );
   }
@@ -253,12 +304,13 @@ class TauriSqlRepository implements LifeRepository {
         SET state_run_id = $2,
             state = $3,
             task_name = $4,
-            started_at = $5,
-            ended_at = $6,
-            planned_end_at = $7,
-            created_at = $8,
-            updated_at = $9,
-            is_edited = $10
+            note = $5,
+            started_at = $6,
+            ended_at = $7,
+            planned_end_at = $8,
+            created_at = $9,
+            updated_at = $10,
+            is_edited = $11
         WHERE id = $1`,
       segmentToParams(segment),
     );
@@ -289,6 +341,7 @@ class TauriSqlRepository implements LifeRepository {
         state_run_id TEXT NOT NULL,
         state TEXT NOT NULL CHECK (state IN ('busy', 'rest')),
         task_name TEXT,
+        note TEXT,
         started_at TEXT NOT NULL,
         ended_at TEXT,
         planned_end_at TEXT NOT NULL,
@@ -297,8 +350,29 @@ class TauriSqlRepository implements LifeRepository {
         is_edited INTEGER NOT NULL DEFAULT 0
       )
     `);
+    await this.ensureColumn("timeline_segments", "note", "TEXT");
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS summaries (
+        scope TEXT NOT NULL CHECK (scope IN ('day', 'week')),
+        summary_key TEXT NOT NULL,
+        content TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (scope, summary_key)
+      )
+    `);
     await this.db.execute("CREATE INDEX IF NOT EXISTS idx_timeline_time ON timeline_segments (started_at, ended_at)");
     await this.db.execute("CREATE INDEX IF NOT EXISTS idx_timeline_run ON timeline_segments (state_run_id)");
+  }
+
+  private async ensureColumn(tableName: string, columnName: string, definition: string): Promise<void> {
+    const columns = await this.db.select<Array<{ name: string }>>(`PRAGMA table_info(${tableName})`);
+    if (columns.some((column) => column.name === columnName)) return;
+    await this.db.execute(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
+
+  private async listSummaries(): Promise<SummaryEntry[]> {
+    const rows = await this.db.select<SummaryRow[]>("SELECT * FROM summaries ORDER BY scope ASC, summary_key ASC");
+    return rows.map(rowToSummary);
   }
 }
 
@@ -312,6 +386,7 @@ interface SegmentRow {
   state_run_id: string;
   state: "busy" | "rest";
   task_name: string | null;
+  note: string | null;
   started_at: string;
   ended_at: string | null;
   planned_end_at: string;
@@ -320,12 +395,20 @@ interface SegmentRow {
   is_edited: number;
 }
 
+interface SummaryRow {
+  scope: SummaryScope;
+  summary_key: string;
+  content: string;
+  updated_at: string;
+}
+
 function rowToSegment(row: SegmentRow): TimelineSegment {
   return {
     id: row.id,
     stateRunId: row.state_run_id,
     state: row.state,
     taskName: row.task_name,
+    note: row.note ?? null,
     startedAt: row.started_at,
     endedAt: row.ended_at,
     plannedEndAt: row.planned_end_at,
@@ -341,6 +424,7 @@ function segmentToParams(segment: TimelineSegment): unknown[] {
     segment.stateRunId,
     segment.state,
     segment.taskName,
+    segment.note,
     segment.startedAt,
     segment.endedAt,
     segment.plannedEndAt,
@@ -348,6 +432,19 @@ function segmentToParams(segment: TimelineSegment): unknown[] {
     segment.updatedAt,
     segment.isEdited ? 1 : 0,
   ];
+}
+
+function rowToSummary(row: SummaryRow): SummaryEntry {
+  return {
+    scope: row.scope,
+    key: row.summary_key,
+    content: row.content,
+    updatedAt: row.updated_at,
+  };
+}
+
+function summaryToParams(summary: SummaryEntry): unknown[] {
+  return [summary.scope, summary.key, summary.content, summary.updatedAt];
 }
 
 export function parseLifeDataExport(raw: string): LifeDataExport {
@@ -368,10 +465,12 @@ export function parseLifeDataExport(raw: string): LifeDataExport {
   if (!Array.isArray(segmentValues)) {
     throw new Error("导入文件缺少记录列表。");
   }
+  const summaryValues = Array.isArray(parsed.summaries) ? parsed.summaries : [];
 
   const segments = sortSegments(
     segmentValues.map((value, index) => normalizeImportedSegment(value, index, settings)),
   );
+  const summaries = sortSummaries(summaryValues.map((value, index) => normalizeImportedSummary(value, index)));
   assertImportConsistency(segments);
 
   return {
@@ -380,6 +479,7 @@ export function parseLifeDataExport(raw: string): LifeDataExport {
     exportedAt: readOptionalIso(parsed.exportedAt) ?? new Date().toISOString(),
     settings,
     segments,
+    summaries,
   };
 }
 
@@ -388,6 +488,7 @@ function buildDataExport(data: StoredData): LifeDataExport {
   const segments = sortSegments(
     data.segments.map((segment, index) => normalizeImportedSegment(segment, index, settings)),
   );
+  const summaries = sortSummaries(data.summaries.map((summary, index) => normalizeImportedSummary(summary, index)));
 
   return {
     app: EXPORT_APP,
@@ -395,6 +496,7 @@ function buildDataExport(data: StoredData): LifeDataExport {
     exportedAt: new Date().toISOString(),
     settings,
     segments,
+    summaries,
   };
 }
 
@@ -435,12 +537,31 @@ function normalizeImportedSegment(value: unknown, index: number, settings: LifeS
     stateRunId: readRequiredString(value.stateRunId, "状态 ID", index),
     state,
     taskName: typeof value.taskName === "string" ? normalizeTaskName(value.taskName) : null,
+    note: typeof value.note === "string" ? normalizeNote(value.note) : null,
     startedAt,
     endedAt,
     plannedEndAt,
     createdAt: readOptionalIso(value.createdAt) ?? nowIso,
     updatedAt: readOptionalIso(value.updatedAt) ?? nowIso,
     isEdited: typeof value.isEdited === "boolean" ? value.isEdited : Boolean(value.isEdited),
+  };
+}
+
+function normalizeImportedSummary(value: unknown, index: number): SummaryEntry {
+  if (!isRecord(value)) {
+    throw new Error(`导入文件中第 ${index + 1} 条总结格式不正确。`);
+  }
+
+  const scope = readSummaryScope(value.scope, index);
+  const key = readRequiredString(value.key, "总结日期", index);
+  const content = typeof value.content === "string" ? value.content.trim() : "";
+  const updatedAt = readOptionalIso(value.updatedAt) ?? new Date().toISOString();
+
+  return {
+    scope,
+    key,
+    content,
+    updatedAt,
   };
 }
 
@@ -468,6 +589,12 @@ function sortSegments(segments: TimelineSegment[]): TimelineSegment[] {
   return [...segments].sort((left, right) => left.startedAt.localeCompare(right.startedAt));
 }
 
+function sortSummaries(summaries: SummaryEntry[]): SummaryEntry[] {
+  return [...summaries].sort(
+    (left, right) => left.scope.localeCompare(right.scope) || left.key.localeCompare(right.key),
+  );
+}
+
 function normalizeQuickTasks(value: unknown): string[] {
   if (!Array.isArray(value)) return DEFAULT_SETTINGS.quickTasks;
 
@@ -482,6 +609,11 @@ function normalizeQuickTasks(value: unknown): string[] {
 function readTrackableState(value: unknown, index: number): TrackableState {
   if (value === "busy" || value === "rest") return value;
   throw new Error(`导入文件中第 ${index + 1} 条记录的状态无效。`);
+}
+
+function readSummaryScope(value: unknown, index: number): SummaryScope {
+  if (value === "day" || value === "week") return value;
+  throw new Error(`导入文件中第 ${index + 1} 条总结的范围无效。`);
 }
 
 function readRequiredString(value: unknown, label: string, index: number): string {

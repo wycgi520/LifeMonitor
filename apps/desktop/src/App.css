@@ -299,7 +299,8 @@ h3 {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid #cdd7d4;
@@ -313,9 +314,16 @@ select {
 
 input:focus,
 select:focus,
+textarea:focus,
 button:focus-visible {
   outline: 2px solid #147c74;
   outline-offset: 2px;
+}
+
+textarea {
+  min-height: 74px;
+  resize: vertical;
+  line-height: 1.45;
 }
 
 .quick-tasks {
@@ -323,6 +331,15 @@ button:focus-visible {
   flex-wrap: wrap;
   gap: 8px;
   margin: 12px 0 18px;
+}
+
+.note-editor {
+  display: grid;
+  gap: 7px;
+  margin: 12px 0 18px;
+  color: #52636b;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .quick-tasks button {
@@ -447,6 +464,33 @@ button:focus-visible {
 .task-stats {
   border-top: 1px solid #e1e8e6;
   padding-top: 16px;
+}
+
+.summary-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 16px 0;
+}
+
+.summary-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.summary-editor textarea {
+  min-height: 128px;
+}
+
+.summary-editor .icon-button {
+  justify-self: start;
+}
+
+.summary-updated {
+  color: #64747b;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .task-stat-row {
@@ -739,6 +783,10 @@ button:focus-visible {
   min-width: 0;
 }
 
+.backfill-note {
+  grid-column: 1 / -1;
+}
+
 .backfill-fields .inline-message {
   grid-column: 1 / -1;
 }
@@ -785,6 +833,11 @@ button:focus-visible {
   gap: 8px;
 }
 
+.timeline-note {
+  grid-column: 1 / -1;
+  min-height: 58px;
+}
+
 .timeline-time-field {
   position: relative;
   min-width: 0;
@@ -823,6 +876,24 @@ button:focus-visible {
 .timeline-meta strong {
   color: #172026;
   font-size: 14px;
+}
+
+.time-delta {
+  width: max-content;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.time-delta.overtime {
+  color: #7a3410;
+  background: #fff0df;
+}
+
+.time-delta.undertime {
+  color: #155e75;
+  background: #eaf8fb;
 }
 
 .live-tag {
@@ -1174,6 +1245,7 @@ button:focus-visible {
 @media (max-width: 1120px) {
   .dashboard,
   .analysis-layout,
+  .summary-layout,
   .backfill-form,
   .data-portability,
   .timeline-row,

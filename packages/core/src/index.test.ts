@@ -7,6 +7,7 @@ import {
   createSegment,
   deriveTimerSnapshot,
   extendDueAt,
+  mergeSegments,
   splitSegmentAt,
 } from "./index";
 
@@ -130,7 +131,84 @@ describe("today stats", () => {
     expect(stats.restSeconds).toBe(1200);
     expect(stats.overtimeBusySeconds).toBe(600);
     expect(stats.overtimeRestSeconds).toBe(600);
+    expect(stats.undertimeBusySeconds).toBe(0);
+    expect(stats.undertimeRestSeconds).toBe(0);
+    expect(stats.busyPomodoroCount).toBe(1);
+    expect(stats.restPomodoroCount).toBe(1);
+    expect(stats.totalPomodoroCount).toBe(2);
     expect(stats.taskStats).toEqual([{ taskName: "写代码", seconds: 3600 }]);
+  });
+
+  it("counts overtime when a timed-out segment is extended to the actual handled time", () => {
+    const segment = {
+      ...createSegment({
+        state: "busy",
+        taskName: "写代码",
+        nowIso: "2026-05-21T01:00:00.000Z",
+        settings: { ...DEFAULT_SETTINGS, busyMinutes: 50 },
+      }),
+      endedAt: "2026-05-21T02:05:00.000Z",
+      plannedEndAt: "2026-05-21T01:50:00.000Z",
+    };
+
+    const stats = calculateTodayStats(
+      [segment],
+      "2026-05-21T00:00:00.000Z",
+      "2026-05-22T00:00:00.000Z",
+      "2026-05-21T03:00:00.000Z",
+    );
+
+    expect(stats.busySeconds).toBe(3900);
+    expect(stats.overtimeBusySeconds).toBe(900);
+    expect(stats.undertimeBusySeconds).toBe(0);
+  });
+
+  it("counts undertime for closed segments that ended before their planned end", () => {
+    const segment = {
+      ...createSegment({
+        state: "rest",
+        taskName: "喝水",
+        nowIso: "2026-05-21T01:00:00.000Z",
+        settings: { ...DEFAULT_SETTINGS, restMinutes: 20 },
+      }),
+      endedAt: "2026-05-21T01:08:00.000Z",
+      plannedEndAt: "2026-05-21T01:20:00.000Z",
+    };
+
+    const stats = calculateTodayStats(
+      [segment],
+      "2026-05-21T00:00:00.000Z",
+      "2026-05-22T00:00:00.000Z",
+      "2026-05-21T03:00:00.000Z",
+    );
+
+    expect(stats.restSeconds).toBe(480);
+    expect(stats.overtimeRestSeconds).toBe(0);
+    expect(stats.undertimeRestSeconds).toBe(720);
+  });
+
+  it("assigns pomodoro counts to the segment start day while clipping durations to the selected day", () => {
+    const segment = {
+      ...createSegment({
+        state: "busy",
+        taskName: "跨天",
+        nowIso: "2026-05-20T23:40:00.000Z",
+        settings: DEFAULT_SETTINGS,
+      }),
+      endedAt: "2026-05-21T00:20:00.000Z",
+      plannedEndAt: "2026-05-21T00:30:00.000Z",
+    };
+
+    const stats = calculateTodayStats(
+      [segment],
+      "2026-05-21T00:00:00.000Z",
+      "2026-05-22T00:00:00.000Z",
+      "2026-05-21T03:00:00.000Z",
+    );
+
+    expect(stats.busySeconds).toBe(1200);
+    expect(stats.busyPomodoroCount).toBe(0);
+    expect(stats.totalPomodoroCount).toBe(0);
   });
 
   it("splits a segment without changing its state run", () => {
@@ -138,6 +216,7 @@ describe("today stats", () => {
       ...createSegment({
         state: "busy",
         taskName: null,
+        note: "原始备注",
         nowIso: "2026-05-21T01:00:00.000Z",
         settings: DEFAULT_SETTINGS,
       }),
@@ -149,12 +228,41 @@ describe("today stats", () => {
     expect(left.endedAt).toBe("2026-05-21T01:30:00.000Z");
     expect(right.startedAt).toBe("2026-05-21T01:30:00.000Z");
     expect(right.stateRunId).toBe(segment.stateRunId);
+    expect(left.note).toBe("原始备注");
+    expect(right.note).toBe("原始备注");
+  });
+
+  it("merges different notes with a newline and keeps identical notes once", () => {
+    const left = {
+      ...createSegment({
+        state: "busy",
+        taskName: "coding",
+        note: "左侧备注",
+        nowIso: "2026-05-21T01:00:00.000Z",
+        settings: DEFAULT_SETTINGS,
+      }),
+      endedAt: "2026-05-21T01:30:00.000Z",
+    };
+    const right = {
+      ...createSegment({
+        state: "busy",
+        taskName: "coding",
+        note: "右侧备注",
+        nowIso: "2026-05-21T01:30:00.000Z",
+        settings: DEFAULT_SETTINGS,
+      }),
+      endedAt: "2026-05-21T02:00:00.000Z",
+    };
+
+    expect(mergeSegments(left, right).note).toBe("左侧备注\n右侧备注");
+    expect(mergeSegments(left, { ...right, note: "左侧备注" }).note).toBe("左侧备注");
   });
 
   it("creates closed edited segments for manual backfill", () => {
     const segment = createManualSegment({
       state: "busy",
       taskName: "补记会议",
+      note: "会后补记",
       startedAt: "2026-05-21T03:00:00.000Z",
       endedAt: "2026-05-21T03:45:00.000Z",
       settings: { ...DEFAULT_SETTINGS, busyMinutes: 30 },
@@ -163,6 +271,7 @@ describe("today stats", () => {
 
     expect(segment.endedAt).toBe("2026-05-21T03:45:00.000Z");
     expect(segment.plannedEndAt).toBe("2026-05-21T03:30:00.000Z");
+    expect(segment.note).toBe("会后补记");
     expect(segment.isEdited).toBe(true);
   });
 });

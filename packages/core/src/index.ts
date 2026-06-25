@@ -6,6 +6,8 @@ export type ReminderPolicy = "stop-at-timeout";
 
 export type CloseWindowBehavior = "ask" | "minimize-to-tray" | "quit";
 
+export type SummaryScope = "day" | "week";
+
 export interface LifeSettings {
   busyMinutes: number;
   restMinutes: number;
@@ -22,12 +24,20 @@ export interface TimelineSegment {
   stateRunId: string;
   state: TrackableState;
   taskName: string | null;
+  note: string | null;
   startedAt: string;
   endedAt: string | null;
   plannedEndAt: string;
   createdAt: string;
   updatedAt: string;
   isEdited: boolean;
+}
+
+export interface SummaryEntry {
+  scope: SummaryScope;
+  key: string;
+  content: string;
+  updatedAt: string;
 }
 
 export interface TimerSnapshot {
@@ -53,6 +63,11 @@ export interface TodayStats {
   restSeconds: number;
   overtimeBusySeconds: number;
   overtimeRestSeconds: number;
+  undertimeBusySeconds: number;
+  undertimeRestSeconds: number;
+  busyPomodoroCount: number;
+  restPomodoroCount: number;
+  totalPomodoroCount: number;
   taskStats: TaskStat[];
   unmarkedSeconds: number;
 }
@@ -94,6 +109,7 @@ export function getTargetMinutes(state: TrackableState, settings: LifeSettings):
 export function createSegment(input: {
   state: TrackableState;
   taskName?: string | null;
+  note?: string | null;
   nowIso: string;
   settings: LifeSettings;
   stateRunId?: string;
@@ -107,6 +123,7 @@ export function createSegment(input: {
     stateRunId: input.stateRunId ?? createId("run"),
     state: input.state,
     taskName: normalizeTaskName(input.taskName),
+    note: normalizeNote(input.note),
     startedAt: input.nowIso,
     endedAt: null,
     plannedEndAt,
@@ -119,6 +136,7 @@ export function createSegment(input: {
 export function createManualSegment(input: {
   state: TrackableState;
   taskName?: string | null;
+  note?: string | null;
   startedAt: string;
   endedAt: string;
   settings: LifeSettings;
@@ -138,6 +156,7 @@ export function createManualSegment(input: {
     stateRunId: createId("run"),
     state: input.state,
     taskName: normalizeTaskName(input.taskName),
+    note: normalizeNote(input.note),
     startedAt: input.startedAt,
     endedAt: input.endedAt,
     plannedEndAt: addMinutes(input.startedAt, getTargetMinutes(input.state, input.settings)),
@@ -213,24 +232,40 @@ export function calculateTodayStats(
   let restSeconds = 0;
   let overtimeBusySeconds = 0;
   let overtimeRestSeconds = 0;
+  let undertimeBusySeconds = 0;
+  let undertimeRestSeconds = 0;
+  let busyPomodoroCount = 0;
+  let restPomodoroCount = 0;
   let unmarkedSeconds = 0;
 
   for (const segment of segments) {
+    const startsInDay = isWithinRange(segment.startedAt, dayStartIso, dayEndIso);
+    if (startsInDay) {
+      if (segment.state === "busy") {
+        busyPomodoroCount += 1;
+      } else {
+        restPomodoroCount += 1;
+      }
+    }
+
     const clipped = clipRange(segment.startedAt, segment.endedAt ?? nowIso, dayStartIso, dayEndIso);
     if (!clipped) continue;
 
     const seconds = secondsBetween(clipped.start, clipped.end);
     const overtime = calculateOvertimeSeconds(segment, clipped.start, clipped.end);
+    const undertime = calculateUndertimeSeconds(segment, dayStartIso, dayEndIso);
 
     if (segment.state === "busy") {
       busySeconds += seconds;
       overtimeBusySeconds += overtime;
+      undertimeBusySeconds += undertime;
       const task = segment.taskName ?? UNMARKED_TASK;
       taskSeconds.set(task, (taskSeconds.get(task) ?? 0) + seconds);
       if (!segment.taskName) unmarkedSeconds += seconds;
     } else {
       restSeconds += seconds;
       overtimeRestSeconds += overtime;
+      undertimeRestSeconds += undertime;
     }
   }
 
@@ -239,6 +274,11 @@ export function calculateTodayStats(
     restSeconds,
     overtimeBusySeconds,
     overtimeRestSeconds,
+    undertimeBusySeconds,
+    undertimeRestSeconds,
+    busyPomodoroCount,
+    restPomodoroCount,
+    totalPomodoroCount: busyPomodoroCount + restPomodoroCount,
     taskStats: [...taskSeconds.entries()]
       .map(([taskName, seconds]) => ({ taskName, seconds }))
       .sort((a, b) => b.seconds - a.seconds || a.taskName.localeCompare(b.taskName)),
@@ -281,6 +321,7 @@ export function canMergeSegments(left: TimelineSegment, right: TimelineSegment):
 export function mergeSegments(left: TimelineSegment, right: TimelineSegment, nowIso = new Date().toISOString()): TimelineSegment {
   return {
     ...left,
+    note: mergeNotes(left.note, right.note),
     endedAt: right.endedAt,
     updatedAt: nowIso,
     isEdited: true,
@@ -315,10 +356,35 @@ export function normalizeTaskName(value?: string | null): string | null {
   return normalized ? normalized : null;
 }
 
+export function normalizeNote(value?: string | null): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+export function mergeNotes(left?: string | null, right?: string | null): string | null {
+  const leftNote = normalizeNote(left);
+  const rightNote = normalizeNote(right);
+  if (!leftNote) return rightNote;
+  if (!rightNote || leftNote === rightNote) return leftNote;
+  return `${leftNote}\n${rightNote}`;
+}
+
 function calculateOvertimeSeconds(segment: TimelineSegment, clippedStartIso: string, clippedEndIso: string): number {
   const overtimeStart = Math.max(new Date(segment.plannedEndAt).getTime(), new Date(clippedStartIso).getTime());
   const overtimeEnd = new Date(clippedEndIso).getTime();
   return Math.max(0, Math.round((overtimeEnd - overtimeStart) / 1000));
+}
+
+function calculateUndertimeSeconds(segment: TimelineSegment, dayStartIso: string, dayEndIso: string): number {
+  if (!segment.endedAt) return 0;
+
+  const clipped = clipRange(segment.endedAt, segment.plannedEndAt, dayStartIso, dayEndIso);
+  if (!clipped) return 0;
+  return secondsBetween(clipped.start, clipped.end);
+}
+
+function isWithinRange(isoDate: string, startIso: string, endIso: string): boolean {
+  return isoDate >= startIso && isoDate < endIso;
 }
 
 function clipRange(
