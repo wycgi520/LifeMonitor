@@ -1001,12 +1001,38 @@ textarea {
   z-index: 10;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 16px;
+  gap: 12px;
   align-items: center;
-  margin-bottom: 18px;
-  padding: 18px;
+  margin-bottom: 16px;
+  padding: 12px 16px;
   border-color: #dfc27a;
   background: #fffaf1;
+}
+
+.reminder-copy {
+  min-width: 0;
+}
+
+.reminder-copy .eyebrow {
+  margin-bottom: 3px;
+}
+
+.reminder-status {
+  margin: 0 0 6px;
+  color: #172026;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.reminder-status strong {
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.reminder .muted {
+  margin: 0;
 }
 
 .reminder-actions {

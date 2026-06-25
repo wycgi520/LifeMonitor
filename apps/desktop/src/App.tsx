@@ -316,10 +316,12 @@ function TimeoutNoticeBanner({
 
   return (
     <section className="reminder" aria-live="polite">
-      <div>
+      <div className="reminder-copy">
         <p className="eyebrow">到点提醒</p>
-        <h2>已自动回到空闲</h2>
-        <p>{trackableStateLabels[notice.state]}已在 {formatDateTimeLabel(notice.endedAt)} 结束。</p>
+        <p className="reminder-status">
+          <strong>已自动回到空闲</strong>，{trackableStateLabels[notice.state]}已在{" "}
+          {formatDateTimeLabel(notice.endedAt)} 结束。
+        </p>
         <p className="muted">上一段：{notice.taskName ?? UNMARKED_TASK}</p>
       </div>
       <div className="reminder-actions">
