@@ -391,6 +391,18 @@ textarea {
   background: #277b85;
 }
 
+.icon-button.extend-to-now.busy {
+  border-color: #e8b16f;
+  color: #713f12;
+  background: #fff7ed;
+}
+
+.icon-button.extend-to-now.rest {
+  border-color: #7db8b2;
+  color: #0f5955;
+  background: #ecfdf5;
+}
+
 .icon-only {
   width: 36px;
   height: 36px;
@@ -1193,6 +1205,18 @@ textarea {
   border-color: #277b85;
   color: #fff;
   background: #277b85;
+}
+
+.mini-action-button.extend-to-now.busy {
+  border-color: #e8b16f;
+  color: #713f12;
+  background: #fffaf1;
+}
+
+.mini-action-button.extend-to-now.rest {
+  border-color: #7db8b2;
+  color: #0f5955;
+  background: #f0fbf7;
 }
 
 .mini-expand {

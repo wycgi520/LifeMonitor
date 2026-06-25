@@ -325,7 +325,7 @@ function TimeoutNoticeBanner({
       <div className="reminder-actions">
         <button
           type="button"
-          className="icon-button"
+          className={`icon-button extend-to-now ${notice.state}`}
           onClick={() => void monitor.extendTimeoutNoticeToNow()}
           title="把刚刚结束的状态补到现在"
         >
@@ -1426,7 +1426,7 @@ function MiniReminderWindow({
         {monitor.timeoutNotice && (
           <button
             type="button"
-            className="icon-only mini-action-button"
+            className={`icon-only mini-action-button extend-to-now ${monitor.timeoutNotice.state}`}
             onClick={() => void monitor.extendTimeoutNoticeToNow()}
             title="把刚刚结束的状态补到现在"
             aria-label="补到现在"
