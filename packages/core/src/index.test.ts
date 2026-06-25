@@ -133,10 +133,140 @@ describe("today stats", () => {
     expect(stats.overtimeRestSeconds).toBe(600);
     expect(stats.undertimeBusySeconds).toBe(0);
     expect(stats.undertimeRestSeconds).toBe(0);
-    expect(stats.busyPomodoroCount).toBe(1);
-    expect(stats.restPomodoroCount).toBe(1);
-    expect(stats.totalPomodoroCount).toBe(2);
+    expect(stats.idleSeconds).toBe(2400);
+    expect(stats.pomodoroCount).toBe(1);
     expect(stats.taskStats).toEqual([{ taskName: "写代码", seconds: 3600 }]);
+  });
+
+  it("does not count a pomodoro until the following rest has ended", () => {
+    const busy = {
+      ...createSegment({
+        state: "busy",
+        taskName: "写代码",
+        nowIso: "2026-05-21T01:00:00.000Z",
+        settings: DEFAULT_SETTINGS,
+        stateRunId: "run_busy",
+      }),
+      endedAt: "2026-05-21T01:50:00.000Z",
+    };
+    const openRest = createSegment({
+      state: "rest",
+      taskName: "喝水",
+      nowIso: "2026-05-21T01:50:00.000Z",
+      settings: DEFAULT_SETTINGS,
+      stateRunId: "run_rest",
+    });
+
+    const stats = calculateTodayStats(
+      [busy, openRest],
+      "2026-05-21T00:00:00.000Z",
+      "2026-05-22T00:00:00.000Z",
+      "2026-05-21T02:00:00.000Z",
+    );
+
+    expect(stats.pomodoroCount).toBe(0);
+  });
+
+  it("counts split or paused runs as one pomodoro combination", () => {
+    const busyStart = {
+      ...createSegment({
+        state: "busy",
+        taskName: "写代码",
+        nowIso: "2026-05-21T01:00:00.000Z",
+        settings: DEFAULT_SETTINGS,
+        stateRunId: "run_busy",
+      }),
+      endedAt: "2026-05-21T01:20:00.000Z",
+    };
+    const busyResume = {
+      ...createSegment({
+        state: "busy",
+        taskName: "写代码",
+        nowIso: "2026-05-21T01:25:00.000Z",
+        settings: DEFAULT_SETTINGS,
+        stateRunId: "run_busy",
+      }),
+      endedAt: "2026-05-21T01:50:00.000Z",
+    };
+    const rest = {
+      ...createSegment({
+        state: "rest",
+        taskName: "喝水",
+        nowIso: "2026-05-21T01:50:00.000Z",
+        settings: DEFAULT_SETTINGS,
+        stateRunId: "run_rest",
+      }),
+      endedAt: "2026-05-21T02:00:00.000Z",
+    };
+
+    const stats = calculateTodayStats(
+      [busyStart, busyResume, rest],
+      "2026-05-21T00:00:00.000Z",
+      "2026-05-22T00:00:00.000Z",
+      "2026-05-21T02:30:00.000Z",
+    );
+
+    expect(stats.pomodoroCount).toBe(1);
+  });
+
+  it("counts idle gaps after the first recorded interval and up to now for today", () => {
+    const busy = {
+      ...createSegment({
+        state: "busy",
+        taskName: "写代码",
+        nowIso: "2026-05-21T01:00:00.000Z",
+        settings: DEFAULT_SETTINGS,
+      }),
+      endedAt: "2026-05-21T01:30:00.000Z",
+    };
+    const rest = {
+      ...createSegment({
+        state: "rest",
+        taskName: "喝水",
+        nowIso: "2026-05-21T01:40:00.000Z",
+        settings: DEFAULT_SETTINGS,
+      }),
+      endedAt: "2026-05-21T01:50:00.000Z",
+    };
+
+    const stats = calculateTodayStats(
+      [busy, rest],
+      "2026-05-21T00:00:00.000Z",
+      "2026-05-22T00:00:00.000Z",
+      "2026-05-21T02:10:00.000Z",
+    );
+
+    expect(stats.idleSeconds).toBe(1800);
+  });
+
+  it("does not count the rest of a historical day as idle", () => {
+    const busy = {
+      ...createSegment({
+        state: "busy",
+        taskName: "写代码",
+        nowIso: "2026-05-21T01:00:00.000Z",
+        settings: DEFAULT_SETTINGS,
+      }),
+      endedAt: "2026-05-21T01:30:00.000Z",
+    };
+    const rest = {
+      ...createSegment({
+        state: "rest",
+        taskName: "喝水",
+        nowIso: "2026-05-21T01:40:00.000Z",
+        settings: DEFAULT_SETTINGS,
+      }),
+      endedAt: "2026-05-21T01:50:00.000Z",
+    };
+
+    const stats = calculateTodayStats(
+      [busy, rest],
+      "2026-05-21T00:00:00.000Z",
+      "2026-05-22T00:00:00.000Z",
+      "2026-05-23T02:10:00.000Z",
+    );
+
+    expect(stats.idleSeconds).toBe(600);
   });
 
   it("counts overtime when a timed-out segment is extended to the actual handled time", () => {
@@ -207,8 +337,7 @@ describe("today stats", () => {
     );
 
     expect(stats.busySeconds).toBe(1200);
-    expect(stats.busyPomodoroCount).toBe(0);
-    expect(stats.totalPomodoroCount).toBe(0);
+    expect(stats.pomodoroCount).toBe(0);
   });
 
   it("splits a segment without changing its state run", () => {

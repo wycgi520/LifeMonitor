@@ -73,6 +73,7 @@ export interface LifeMonitorController {
   timeoutNotice: TimeoutNotice | null;
   startBusy: (taskName?: string | null) => Promise<void>;
   startRest: (taskName?: string | null) => Promise<void>;
+  endCurrent: () => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   changeTask: (taskName: string | null) => Promise<void>;
@@ -428,6 +429,35 @@ export function useLifeMonitor(): LifeMonitorController {
     (taskName?: string | null) => switchToState("rest", taskName),
     [switchToState],
   );
+
+  const endCurrent = useCallback(async () => {
+    if (state === "paused") {
+      setActiveSegment(null);
+      setPausedContext(null);
+      setState("idle");
+      setTaskDraftFromSystem("");
+      setTimeoutNotice(null);
+      return;
+    }
+
+    if (!activeSegment) return;
+
+    const now = new Date().toISOString();
+    const runId = activeSegment.stateRunId;
+    await persistAndRefresh(async (repo) => {
+      await closeCurrent(repo, now);
+      setActiveSegment(null);
+      setState("idle");
+      setTaskDraftFromSystem("");
+      setPausedContext(null);
+      setTimeoutNotice(null);
+      setExtensionMinutesByRun((previous) => {
+        const next = { ...previous };
+        delete next[runId];
+        return next;
+      });
+    });
+  }, [activeSegment, closeCurrent, persistAndRefresh, setTaskDraftFromSystem, state]);
 
   const pause = useCallback(async () => {
     if (!activeSegment) return;
@@ -818,6 +848,7 @@ export function useLifeMonitor(): LifeMonitorController {
     timeoutNotice,
     startBusy,
     startRest,
+    endCurrent,
     pause,
     resume,
     changeTask,

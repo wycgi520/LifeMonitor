@@ -61,13 +61,12 @@ export interface TaskStat {
 export interface TodayStats {
   busySeconds: number;
   restSeconds: number;
+  idleSeconds: number;
   overtimeBusySeconds: number;
   overtimeRestSeconds: number;
   undertimeBusySeconds: number;
   undertimeRestSeconds: number;
-  busyPomodoroCount: number;
-  restPomodoroCount: number;
-  totalPomodoroCount: number;
+  pomodoroCount: number;
   taskStats: TaskStat[];
   unmarkedSeconds: number;
 }
@@ -234,22 +233,13 @@ export function calculateTodayStats(
   let overtimeRestSeconds = 0;
   let undertimeBusySeconds = 0;
   let undertimeRestSeconds = 0;
-  let busyPomodoroCount = 0;
-  let restPomodoroCount = 0;
   let unmarkedSeconds = 0;
+  const trackedIntervals: Array<{ start: string; end: string }> = [];
 
   for (const segment of segments) {
-    const startsInDay = isWithinRange(segment.startedAt, dayStartIso, dayEndIso);
-    if (startsInDay) {
-      if (segment.state === "busy") {
-        busyPomodoroCount += 1;
-      } else {
-        restPomodoroCount += 1;
-      }
-    }
-
     const clipped = clipRange(segment.startedAt, segment.endedAt ?? nowIso, dayStartIso, dayEndIso);
     if (!clipped) continue;
+    trackedIntervals.push(clipped);
 
     const seconds = secondsBetween(clipped.start, clipped.end);
     const overtime = calculateOvertimeSeconds(segment, clipped.start, clipped.end);
@@ -272,13 +262,12 @@ export function calculateTodayStats(
   return {
     busySeconds,
     restSeconds,
+    idleSeconds: calculateIdleSeconds(trackedIntervals, dayStartIso, dayEndIso, nowIso),
     overtimeBusySeconds,
     overtimeRestSeconds,
     undertimeBusySeconds,
     undertimeRestSeconds,
-    busyPomodoroCount,
-    restPomodoroCount,
-    totalPomodoroCount: busyPomodoroCount + restPomodoroCount,
+    pomodoroCount: calculatePomodoroCount(segments, dayStartIso, dayEndIso),
     taskStats: [...taskSeconds.entries()]
       .map(([taskName, seconds]) => ({ taskName, seconds }))
       .sort((a, b) => b.seconds - a.seconds || a.taskName.localeCompare(b.taskName)),
@@ -381,6 +370,97 @@ function calculateUndertimeSeconds(segment: TimelineSegment, dayStartIso: string
   const clipped = clipRange(segment.endedAt, segment.plannedEndAt, dayStartIso, dayEndIso);
   if (!clipped) return 0;
   return secondsBetween(clipped.start, clipped.end);
+}
+
+function calculateIdleSeconds(
+  trackedIntervals: Array<{ start: string; end: string }>,
+  dayStartIso: string,
+  dayEndIso: string,
+  nowIso: string,
+): number {
+  const merged = mergeIntervals(trackedIntervals);
+  if (merged.length === 0) return 0;
+
+  let idleSeconds = 0;
+  for (let index = 1; index < merged.length; index += 1) {
+    idleSeconds += secondsBetween(merged[index - 1].end, merged[index].start);
+  }
+
+  if (isWithinRange(nowIso, dayStartIso, dayEndIso)) {
+    const lastInterval = merged[merged.length - 1];
+    const idleEnd = nowIso < dayEndIso ? nowIso : dayEndIso;
+    idleSeconds += secondsBetween(lastInterval.end, idleEnd);
+  }
+
+  return idleSeconds;
+}
+
+function mergeIntervals(intervals: Array<{ start: string; end: string }>): Array<{ start: string; end: string }> {
+  const sorted = [...intervals]
+    .filter((interval) => interval.end > interval.start)
+    .sort((left, right) => left.start.localeCompare(right.start));
+  const merged: Array<{ start: string; end: string }> = [];
+
+  for (const interval of sorted) {
+    const previous = merged[merged.length - 1];
+    if (!previous || interval.start > previous.end) {
+      merged.push({ ...interval });
+      continue;
+    }
+
+    if (interval.end > previous.end) previous.end = interval.end;
+  }
+
+  return merged;
+}
+
+interface StateRun {
+  stateRunId: string;
+  state: TrackableState;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+function calculatePomodoroCount(segments: TimelineSegment[], dayStartIso: string, dayEndIso: string): number {
+  const runs = collectStateRuns(segments).sort((left, right) => left.startedAt.localeCompare(right.startedAt));
+  let count = 0;
+
+  for (let index = 1; index < runs.length; index += 1) {
+    const previous = runs[index - 1];
+    const current = runs[index];
+    if (previous.state !== "busy" || current.state !== "rest") continue;
+    if (!previous.endedAt || !current.endedAt) continue;
+    if (!isWithinRange(current.endedAt, dayStartIso, dayEndIso)) continue;
+    count += 1;
+  }
+
+  return count;
+}
+
+function collectStateRuns(segments: TimelineSegment[]): StateRun[] {
+  const runs = new Map<string, StateRun>();
+
+  for (const segment of segments) {
+    const current = runs.get(segment.stateRunId);
+    if (!current) {
+      runs.set(segment.stateRunId, {
+        stateRunId: segment.stateRunId,
+        state: segment.state,
+        startedAt: segment.startedAt,
+        endedAt: segment.endedAt,
+      });
+      continue;
+    }
+
+    current.startedAt = current.startedAt < segment.startedAt ? current.startedAt : segment.startedAt;
+    if (!current.endedAt || !segment.endedAt) {
+      current.endedAt = null;
+    } else if (segment.endedAt > current.endedAt) {
+      current.endedAt = segment.endedAt;
+    }
+  }
+
+  return [...runs.values()];
 }
 
 function isWithinRange(isoDate: string, startIso: string, endIso: string): boolean {

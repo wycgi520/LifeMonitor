@@ -22,6 +22,7 @@ import {
   Save,
   Scissors,
   Settings2,
+  Square,
   Trash2,
   Upload,
   Volume2,
@@ -67,7 +68,7 @@ const WINDOW_MODE_STORAGE_KEY = "lifemonitor:window-mode:v1";
 const RULER_STEP_MINUTES = 1;
 const DAY_MINUTES = 24 * 60;
 const DEFAULT_BACKFILL_MINUTES = 30;
-const RULER_BASE_WIDTH_PX = 960;
+const RULER_BASE_WIDTH_PX = 760;
 const RULER_ZOOM_LEVELS = [1, 1.5, 2.5, 4] as const;
 
 type PageId = "today" | "timeline" | "stats" | "settings";
@@ -407,7 +408,8 @@ function TodayPage({ monitor }: { monitor: MonitorController }) {
         <div className="stat-list compact">
           <Metric label="忙碌总时长" value={formatDuration(monitor.stats.busySeconds)} />
           <Metric label="休息总时长" value={formatDuration(monitor.stats.restSeconds)} />
-          <Metric label="番茄钟" value={`${monitor.stats.totalPomodoroCount} 个`} />
+          <Metric label="空闲总时长" value={formatDuration(monitor.stats.idleSeconds)} />
+          <Metric label="番茄钟" value={`${monitor.stats.pomodoroCount} 个`} />
           <Metric
             label="超时"
             value={formatDuration(monitor.stats.overtimeBusySeconds + monitor.stats.overtimeRestSeconds)}
@@ -426,6 +428,7 @@ function TodayPage({ monitor }: { monitor: MonitorController }) {
 
 function FocusPanel({ monitor }: { monitor: MonitorController }) {
   const canExtend = monitor.state === "busy" || monitor.state === "rest";
+  const canEnd = monitor.state === "busy" || monitor.state === "rest" || monitor.state === "paused";
   const timerStatusText = getFocusTimerStatus(monitor);
 
   return (
@@ -478,6 +481,10 @@ function FocusPanel({ monitor }: { monitor: MonitorController }) {
         <button type="button" className="icon-button rest" onClick={() => void monitor.startRest()}>
           <Coffee aria-hidden="true" />
           <span>开始休息</span>
+        </button>
+        <button type="button" className="icon-button danger" disabled={!canEnd} onClick={() => void monitor.endCurrent()}>
+          <Square aria-hidden="true" />
+          <span>结束</span>
         </button>
         {monitor.state === "paused" ? (
           <button type="button" className="icon-button" onClick={() => void monitor.resume()}>
@@ -1059,9 +1066,8 @@ function StatsPage({ monitor, selectedDateLabel }: { monitor: MonitorController;
         <div className="stat-list expanded">
           <Metric label="忙碌总时长" value={formatDuration(monitor.stats.busySeconds)} />
           <Metric label="休息总时长" value={formatDuration(monitor.stats.restSeconds)} />
-          <Metric label="忙碌番茄" value={`${monitor.stats.busyPomodoroCount} 个`} />
-          <Metric label="休息番茄" value={`${monitor.stats.restPomodoroCount} 个`} />
-          <Metric label="番茄合计" value={`${monitor.stats.totalPomodoroCount} 个`} />
+          <Metric label="空闲总时长" value={formatDuration(monitor.stats.idleSeconds)} />
+          <Metric label="番茄钟" value={`${monitor.stats.pomodoroCount} 个`} />
           <Metric label="超时忙碌" value={formatDuration(monitor.stats.overtimeBusySeconds)} />
           <Metric label="超时休息" value={formatDuration(monitor.stats.overtimeRestSeconds)} />
           <Metric label="忙碌不足" value={formatDuration(monitor.stats.undertimeBusySeconds)} />
@@ -1134,13 +1140,18 @@ function SummaryEditor({
     setDraft(content);
   }, [content]);
 
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    void onSave(draft);
-  };
+  useEffect(() => {
+    if (draft === content) return;
+
+    const timeout = window.setTimeout(() => {
+      void onSave(draft);
+    }, 700);
+
+    return () => window.clearTimeout(timeout);
+  }, [content, draft, onSave]);
 
   return (
-    <form className="stats-panel summary-editor" onSubmit={submit}>
+    <section className="stats-panel summary-editor">
       <div className="panel-head">
         <div>
           <p className="eyebrow">{subtitle}</p>
@@ -1148,12 +1159,15 @@ function SummaryEditor({
         </div>
         {updatedAt && <span className="summary-updated">{formatDateTimeLabel(updatedAt)}</span>}
       </div>
-      <textarea value={draft} rows={5} onChange={(event) => setDraft(event.target.value)} />
-      <button type="submit" className="icon-button primary">
-        <Save aria-hidden="true" />
-        <span>保存总结</span>
-      </button>
-    </form>
+      <textarea
+        value={draft}
+        rows={4}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          if (draft !== content) void onSave(draft);
+        }}
+      />
+    </section>
   );
 }
 
@@ -1633,6 +1647,7 @@ function TimelineRow({
         <TimelineDateTimeInput
           isoDate={draft.startedAt}
           selectedDate={selectedDate}
+          containerClassName="timeline-start-input"
           title="开始时间"
           onChange={(startedAt) => {
             if (!startedAt) return;
@@ -1642,6 +1657,7 @@ function TimelineRow({
         <TimelineDateTimeInput
           isoDate={draft.endedAt}
           selectedDate={selectedDate}
+          containerClassName="timeline-end-input"
           disabled={isActive}
           title="结束时间"
           onChange={(endedAt) => setDraft((current) => ({ ...current, endedAt }))}
