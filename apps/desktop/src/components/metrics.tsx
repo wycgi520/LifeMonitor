@@ -13,15 +13,58 @@ export function Metric({
   label,
   value,
   tone,
+  icon,
+  accent,
+  hint,
 }: {
   label: string;
   value: string;
   tone?: "warning";
+  icon?: ReactNode;
+  accent?: boolean;
+  hint?: string;
 }) {
   return (
-    <div className={`metric ${tone === "warning" ? "warning-metric" : ""}`}>
-      <span>{label}</span>
+    <div
+      className={`metric ${tone === "warning" ? "warning-metric" : ""} ${accent ? "accent-metric" : ""}`}
+      title={hint}
+    >
+      <span>
+        {icon && <span className="metric-icon">{icon}</span>}
+        {label}
+      </span>
       <strong>{value}</strong>
+      {hint && <small className="metric-hint">{hint}</small>}
+    </div>
+  );
+}
+
+export function CompareBars({
+  title,
+  items,
+}: {
+  title: string;
+  items: Array<{ key: string; label: string; value: number }>;
+}) {
+  const max = Math.max(...items.map((item) => item.value), 0);
+
+  return (
+    <div className="compare-bars">
+      <span className="compare-bars-title">{title}</span>
+      <div className="compare-bars-list">
+        {items.map((item) => (
+          <div key={item.key} className="compare-bar-row">
+            <span className="compare-bar-label">{item.label}</span>
+            <div className="progress-track compare-bar-track">
+              <div
+                className={`progress-bar ${item.key}`}
+                style={{ width: `${max > 0 ? (item.value / max) * 100 : 0}%` }}
+              />
+            </div>
+            <strong className="compare-bar-value">{formatDuration(item.value)}</strong>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

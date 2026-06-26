@@ -89,7 +89,7 @@ import {
   toLocalInputValue,
   toRulerPercent,
 } from "./lib/time";
-import { DayRuler, DonutChart, Metric, StateFeedback, TargetRing, TaskStatsList } from "./components/metrics";
+import { CompareBars, DayRuler, DonutChart, Metric, StateFeedback, TargetRing, TaskStatsList } from "./components/metrics";
 import { getTimeDistributionSegments } from "./components/metrics-data";
 import { isTauriRuntime } from "./services/repository";
 import { useLifeMonitor } from "./services/useLifeMonitor";
@@ -136,13 +136,6 @@ const pageItems = [
   { id: "stats", label: "统计", Icon: BarChart3 },
   { id: "settings", label: "设置", Icon: Settings2 },
 ] as const;
-
-const pageCopy: Record<PageId, { eyebrow: string; title: string }> = {
-  today: { eyebrow: "LifeMonitor", title: "今天在做什么" },
-  timeline: { eyebrow: "记录回看", title: "时间线" },
-  stats: { eyebrow: "数据回顾", title: "统计" },
-  settings: { eyebrow: "应用偏好", title: "设置" },
-};
 
 function App() {
   const monitor = useLifeMonitor();
@@ -275,10 +268,24 @@ function App() {
       )}
 
       <header className="topbar">
-        <div>
-          <p className="eyebrow">{pageCopy[activePage].eyebrow}</p>
-          <h1>{pageCopy[activePage].title}</h1>
-        </div>
+        <nav className="page-tabs" aria-label="主页面">
+          {pageItems.map((item) => {
+            const Icon = item.Icon;
+            const isActive = activePage === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={`page-tab ${isActive ? "active" : ""}`}
+                aria-current={isActive ? "page" : undefined}
+                onClick={() => openPage(item.id)}
+              >
+                <Icon aria-hidden="true" />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
         <div className="topbar-actions">
           {showDateControls && <DateControls monitor={monitor} />}
           <button type="button" className="icon-only" onClick={() => setWindowMode("mini")} title="切换到迷你提醒窗">
@@ -290,25 +297,6 @@ function App() {
           </div>
         </div>
       </header>
-
-      <nav className="page-tabs" aria-label="主页面">
-        {pageItems.map((item) => {
-          const Icon = item.Icon;
-          const isActive = activePage === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              className={`page-tab ${isActive ? "active" : ""}`}
-              aria-current={isActive ? "page" : undefined}
-              onClick={() => openPage(item.id)}
-            >
-              <Icon aria-hidden="true" />
-              <span>{item.label}</span>
-            </button>
-          );
-        })}
-      </nav>
 
       {monitor.error && <p className="error-line">{monitor.error}</p>}
 
@@ -438,40 +426,48 @@ function TodayPage({ monitor }: { monitor: MonitorController }) {
   const hasOvertime = overtimeSeconds > 0;
 
   return (
-    <section className="dashboard today-layout">
-      <FocusPanel monitor={monitor} />
-      <section className="stats-panel today-summary" aria-label="今日概览">
-        <div className="panel-head">
-          <div>
-            <p className="eyebrow">今日概览</p>
-            <h2>现在该注意什么</h2>
+    <section className="today-layout">
+      <div className="today-col-left">
+        <FocusActivity monitor={monitor} />
+      </div>
+      <div className="today-col-right">
+        <FocusConsole monitor={monitor} />
+        <section className="stats-panel today-summary" aria-label="今日概览">
+        <div className="summary-head">
+          <h2>今日概览</h2>
+          <span className="summary-head-note">现在该注意什么</span>
+        </div>
+        <div className="summary-columns">
+          <div className="summary-col-data">
+            <div className="summary-strip">
+              <Metric label="番茄钟" value={`${monitor.stats.pomodoroCount} 个`} />
+              <Metric label="超时" value={formatDuration(overtimeSeconds)} tone={hasOvertime ? "warning" : undefined} />
+              <Metric label="时间不足" value={formatDuration(undertimeSeconds)} />
+              <Metric label="待补记忙碌" value={formatDuration(monitor.stats.unmarkedSeconds)} />
+            </div>
+            <DayRuler segments={distribution} />
+            {hasOvertime ? (
+              <StateFeedback tone="warning" title="今天有超出目标的记录">
+                累计超时 {formatDuration(overtimeSeconds)}，可以在时间线里拆分或补充备注。
+              </StateFeedback>
+            ) : (
+              <StateFeedback tone="success" title="节奏保持得不错">
+                目前没有明显超时，继续保持当前的忙碌与休息节奏。
+              </StateFeedback>
+            )}
+          </div>
+          <div className="summary-col-tasks">
+            <p className="summary-col-title">今日忙碌内容</p>
+            <TaskStatsList tasks={monitor.stats.taskStats.slice(0, 4)} emptyText="今天还没有忙碌记录" showBars />
           </div>
         </div>
-        <div className="summary-metric-grid">
-          <Metric label="番茄钟" value={`${monitor.stats.pomodoroCount} 个`} />
-          <Metric label="超时" value={formatDuration(overtimeSeconds)} tone={hasOvertime ? "warning" : undefined} />
-          <Metric label="时间不足" value={formatDuration(undertimeSeconds)} />
-          <Metric label="待补记忙碌" value={formatDuration(monitor.stats.unmarkedSeconds)} />
-        </div>
-        <DayRuler segments={distribution} />
-        {hasOvertime ? (
-          <StateFeedback tone="warning" title="今天有超出目标的记录">
-            累计超时 {formatDuration(overtimeSeconds)}，可以在时间线里拆分或补充备注。
-          </StateFeedback>
-        ) : (
-          <StateFeedback tone="success" title="节奏保持得不错">
-            目前没有明显超时，继续保持当前的忙碌与休息节奏。
-          </StateFeedback>
-        )}
-        <TaskStatsList tasks={monitor.stats.taskStats.slice(0, 3)} emptyText="今天还没有忙碌记录" />
-      </section>
+        </section>
+      </div>
     </section>
   );
 }
 
-function FocusPanel({ monitor }: { monitor: MonitorController }) {
-  const canExtend = monitor.state === "busy" || monitor.state === "rest";
-  const canEnd = monitor.state === "busy" || monitor.state === "rest" || monitor.state === "paused";
+function FocusConsole({ monitor }: { monitor: MonitorController }) {
   const timerStatusText = getFocusTimerStatus(monitor);
   const isRunning = monitor.state === "busy" || monitor.state === "rest";
   const targetSeconds = Math.max(1, monitor.snapshot.targetMinutes * 60);
@@ -479,63 +475,63 @@ function FocusPanel({ monitor }: { monitor: MonitorController }) {
   const consoleTone = monitor.snapshot.isDue ? "is-due" : monitor.state;
 
   return (
-    <section className="focus-panel">
-      <div className="panel-head">
-        <div>
-          <p className="eyebrow">当前记录</p>
-          <h2>{stateLabels[monitor.state]}</h2>
-        </div>
-        <div className={`due-text ${monitor.snapshot.isDue ? "is-soft-overdue" : ""}`}>
-          {timerStatusText}
-        </div>
+    <div className={`focus-console ${consoleTone}`}>
+      <TargetRing ratio={progressRatio} />
+      <div className="focus-console-copy">
+        <p className="focus-console-state">
+          <span className="focus-state-name">{stateLabels[monitor.state]}</span>
+          <span className="focus-state-status">{timerStatusText}</span>
+        </p>
+        <div className="focus-timer">{getFocusTimerDisplay(monitor)}</div>
+        <p className="focus-console-meta">
+          目标 {monitor.snapshot.targetMinutes} 分钟 · 已持续 {formatDuration(monitor.snapshot.elapsedSeconds)} ·{" "}
+          {monitor.snapshot.taskName ?? UNMARKED_TASK}
+        </p>
       </div>
+    </div>
+  );
+}
 
-      <div className={`focus-console ${consoleTone}`}>
-        <div className="focus-console-copy">
-          <p className="muted">
-            目标 {monitor.snapshot.targetMinutes} 分钟 · {monitor.snapshot.taskName ?? UNMARKED_TASK}
-          </p>
-          <div className="focus-timer">{getFocusTimerDisplay(monitor)}</div>
-          <p className="muted">已持续 {formatDuration(monitor.snapshot.elapsedSeconds)}</p>
+function FocusActivity({ monitor }: { monitor: MonitorController }) {
+  const canExtend = monitor.state === "busy" || monitor.state === "rest";
+  const canEnd = monitor.state === "busy" || monitor.state === "rest" || monitor.state === "paused";
+
+  return (
+    <section className="focus-panel focus-record">
+      <div className="focus-activity">
+        <div className="task-form">
+            <label htmlFor="task-input" className="activity-label">活动内容</label>
+            <input
+              id="task-input"
+              className="activity-input"
+              value={monitor.taskDraft}
+              placeholder="工作 / 散步 / 喝水"
+              onChange={(event) => monitor.setTaskDraft(event.target.value)}
+            />
+            {monitor.settings.quickTasks.length > 0 && (
+              <div className="quick-tasks">
+                {monitor.settings.quickTasks.map((task) => (
+                  <button
+                    key={task}
+                    type="button"
+                    className={monitor.taskDraft.trim() === task.trim() ? "active" : ""}
+                    onClick={() => monitor.setTaskDraft(task)}
+                  >
+                    {task}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <ActiveNoteEditor monitor={monitor} />
         </div>
-        <TargetRing ratio={progressRatio} />
-      </div>
 
-      <div className="task-form">
-        <label htmlFor="task-input">活动内容</label>
-        <div className="task-input-row">
-          <input
-            id="task-input"
-            value={monitor.taskDraft}
-            placeholder="工作 / 散步 / 喝水"
-            onChange={(event) => monitor.setTaskDraft(event.target.value)}
-          />
-        </div>
-      </div>
-
-      <ActiveNoteEditor monitor={monitor} />
-
-      {monitor.settings.quickTasks.length > 0 && (
-        <div className="quick-tasks">
-          {monitor.settings.quickTasks.map((task) => (
-            <button
-              key={task}
-              type="button"
-              className={monitor.taskDraft.trim() === task.trim() ? "active" : ""}
-              onClick={() => monitor.setTaskDraft(task)}
-            >
-              {task}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="action-grid">
-        <button type="button" className="icon-button primary" onClick={() => void monitor.startBusy()}>
+      <div className="action-bar">
+        <button type="button" className="icon-button primary action-lead" onClick={() => void monitor.startBusy()}>
           <Play aria-hidden="true" />
           <span>开始忙碌</span>
         </button>
-        <button type="button" className="icon-button rest" onClick={() => void monitor.startRest()}>
+        <button type="button" className="icon-button rest action-lead" onClick={() => void monitor.startRest()}>
           <Coffee aria-hidden="true" />
           <span>开始休息</span>
         </button>
@@ -549,18 +545,18 @@ function FocusPanel({ monitor }: { monitor: MonitorController }) {
             <span>继续</span>
           </button>
         ) : (
-          <button type="button" className="icon-button" onClick={() => void monitor.pause()}>
+          <button type="button" className="icon-button" disabled={!canEnd} onClick={() => void monitor.pause()}>
             <Pause aria-hidden="true" />
             <span>暂停</span>
           </button>
         )}
-        <button type="button" className="icon-button" disabled={!canExtend} onClick={() => void monitor.extend(5)}>
+        <button type="button" className="icon-button action-mini" disabled={!canExtend} onClick={() => void monitor.extend(5)} title="延长 5 分钟">
           <Clock3 aria-hidden="true" />
-          <span>延长 5 分钟</span>
+          <span>+5 分</span>
         </button>
-        <button type="button" className="icon-button" disabled={!canExtend} onClick={() => void monitor.extend(10)}>
+        <button type="button" className="icon-button action-mini" disabled={!canExtend} onClick={() => void monitor.extend(10)} title="延长 10 分钟">
           <Clock3 aria-hidden="true" />
-          <span>延长 10 分钟</span>
+          <span>+10 分</span>
         </button>
       </div>
     </section>
@@ -1142,19 +1138,27 @@ function StatsPage({ monitor, selectedDateLabel }: { monitor: MonitorController;
     <section className="stats-page">
       <section className="stats-panel stats-wide" aria-label={`${selectedDateLabel}统计`}>
         <div className="panel-head">
-          <div>
-            <p className="eyebrow">{monitor.isViewingToday ? "今日统计" : "历史统计"}</p>
-            <h2>{selectedDateLabel}</h2>
-          </div>
+          <h2>{formatDateLabel(monitor.selectedDate, false)}</h2>
         </div>
-        <div className="stat-list expanded">
-          <Metric label="忙碌总时长" value={formatDuration(monitor.stats.busySeconds)} />
-          <Metric label="休息总时长" value={formatDuration(monitor.stats.restSeconds)} />
-          <Metric label="空闲总时长" value={formatDuration(monitor.stats.idleSeconds)} />
-          <Metric label="番茄钟" value={`${monitor.stats.pomodoroCount} 个`} />
-          <Metric label="超时" value={formatDuration(overtimeSeconds)} />
-          <Metric label="时间不足" value={formatDuration(undertimeSeconds)} />
-          <Metric label="待补记忙碌" value={formatDuration(monitor.stats.unmarkedSeconds)} />
+        <div className="stat-row">
+          <Metric
+            label="番茄钟"
+            value={`${monitor.stats.pomodoroCount} 个`}
+            icon={<span className="metric-tomato" aria-hidden="true">🍅</span>}
+            accent
+          />
+          <CompareBars
+            title="超时 / 时间不足"
+            items={[
+              { key: "overtime", label: "超时", value: overtimeSeconds },
+              { key: "undertime", label: "时间不足", value: undertimeSeconds },
+            ]}
+          />
+          <Metric
+            label="待补记忙碌"
+            value={formatDuration(monitor.stats.unmarkedSeconds)}
+            hint="空闲中被判定为应忙碌的时间，记得去时间线补记"
+          />
         </div>
       </section>
 
@@ -1280,30 +1284,33 @@ function SettingsPage({
         </div>
       </div>
       <form className="settings-form" onSubmit={onSubmit}>
-        <label>
-          忙碌分钟
-          <input
-            type="number"
-            min={1}
-            max={240}
-            value={settingsDraft.busyMinutes}
-            onChange={(event) =>
-              setSettingsDraft((current) => ({ ...current, busyMinutes: Number(event.target.value) }))
-            }
-          />
-        </label>
-        <label>
-          休息分钟
-          <input
-            type="number"
-            min={1}
-            max={120}
-            value={settingsDraft.restMinutes}
-            onChange={(event) =>
-              setSettingsDraft((current) => ({ ...current, restMinutes: Number(event.target.value) }))
-            }
-          />
-        </label>
+        <div className="settings-pair">
+          <label>
+            忙碌分钟
+            <input
+              type="number"
+              min={1}
+              max={240}
+              value={settingsDraft.busyMinutes}
+              onChange={(event) =>
+                setSettingsDraft((current) => ({ ...current, busyMinutes: Number(event.target.value) }))
+              }
+            />
+          </label>
+          <label>
+            休息分钟
+            <input
+              type="number"
+              min={1}
+              max={120}
+              value={settingsDraft.restMinutes}
+              onChange={(event) =>
+                setSettingsDraft((current) => ({ ...current, restMinutes: Number(event.target.value) }))
+              }
+            />
+          </label>
+        </div>
+        <div className="settings-checks">
         <label className="check-row">
           <input
             type="checkbox"
@@ -1335,6 +1342,7 @@ function SettingsPage({
           <Settings2 aria-hidden="true" />
           开机自启
         </label>
+        </div>
         <label className="close-behavior-editor">
           关闭窗口
           <select
