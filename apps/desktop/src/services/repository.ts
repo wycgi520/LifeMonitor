@@ -1,10 +1,9 @@
 import {
-  addMinutes,
+  buildLifeDataExport,
   DEFAULT_SETTINGS,
-  getTargetMinutes,
-  normalizeNote,
   normalizeTaskName,
   type LifeSettings,
+  type LifeDataExport,
   type SummaryEntry,
   type SummaryScope,
   type TimelineSegment,
@@ -33,18 +32,7 @@ interface StoredData {
   summaries: SummaryEntry[];
 }
 
-export interface LifeDataExport {
-  app: "LifeMonitor";
-  version: 2;
-  exportedAt: string;
-  settings: LifeSettings;
-  segments: TimelineSegment[];
-  summaries: SummaryEntry[];
-}
-
 const STORAGE_KEY = "lifemonitor:data:v1";
-const EXPORT_APP = "LifeMonitor";
-const EXPORT_VERSION = 2;
 
 export async function createRepository(): Promise<LifeRepository> {
   if (isTauriRuntime()) {
@@ -82,14 +70,14 @@ class LocalStorageRepository implements LifeRepository {
   }
 
   async exportData(): Promise<LifeDataExport> {
-    return buildDataExport(this.read());
+    return buildLifeDataExport({ ...this.read(), exportedAt: new Date().toISOString() });
   }
 
   async replaceData(data: LifeDataExport): Promise<void> {
     this.write({
       settings: data.settings,
-      segments: sortSegments(data.segments),
-      summaries: sortSummaries(data.summaries),
+      segments: data.segments,
+      summaries: data.summaries,
     });
   }
 
@@ -99,9 +87,16 @@ class LocalStorageRepository implements LifeRepository {
 
   async saveSummary(summary: SummaryEntry): Promise<void> {
     const data = this.read();
+    const normalizedSummary = buildLifeDataExport({
+      settings: data.settings,
+      segments: [],
+      summaries: [summary],
+      exportedAt: new Date().toISOString(),
+    }).summaries[0];
+
     data.summaries = [
       ...data.summaries.filter((item) => item.scope !== summary.scope || item.key !== summary.key),
-      normalizeImportedSummary(summary, data.summaries.length),
+      normalizedSummary,
     ];
     this.write(data);
   }
@@ -163,15 +158,16 @@ class LocalStorageRepository implements LifeRepository {
 
     try {
       const parsed = JSON.parse(raw) as Partial<StoredData>;
-      const settings = normalizeImportedSettings(parsed.settings);
+      const normalized = buildLifeDataExport({
+        settings: parsed.settings,
+        segments: Array.isArray(parsed.segments) ? parsed.segments : [],
+        summaries: Array.isArray(parsed.summaries) ? parsed.summaries : [],
+        exportedAt: new Date().toISOString(),
+      });
       return {
-        settings,
-        segments: Array.isArray(parsed.segments)
-          ? sortSegments(parsed.segments.map((segment, index) => normalizeImportedSegment(segment, index, settings)))
-          : [],
-        summaries: Array.isArray(parsed.summaries)
-          ? sortSummaries(parsed.summaries.map((summary, index) => normalizeImportedSummary(summary, index)))
-          : [],
+        settings: normalized.settings,
+        segments: normalized.segments,
+        summaries: normalized.summaries,
       };
     } catch {
       return fallback;
@@ -202,7 +198,12 @@ class TauriSqlRepository implements LifeRepository {
     const rows = await this.db.select<Array<{ value: string }>>("SELECT value FROM settings WHERE key = $1", ["main"]);
     if (rows.length === 0) return DEFAULT_SETTINGS;
 
-    return normalizeImportedSettings(JSON.parse(rows[0].value));
+    return buildLifeDataExport({
+      settings: JSON.parse(rows[0].value),
+      segments: [],
+      summaries: [],
+      exportedAt: new Date().toISOString(),
+    }).settings;
   }
 
   async saveSettings(settings: LifeSettings): Promise<void> {
@@ -223,10 +224,11 @@ class TauriSqlRepository implements LifeRepository {
 
   async exportData(): Promise<LifeDataExport> {
     const rows = await this.db.select<SegmentRow[]>("SELECT * FROM timeline_segments ORDER BY started_at ASC");
-    return buildDataExport({
+    return buildLifeDataExport({
       settings: await this.loadSettings(),
       segments: rows.map(rowToSegment),
       summaries: await this.listSummaries(),
+      exportedAt: new Date().toISOString(),
     });
   }
 
@@ -238,10 +240,10 @@ class TauriSqlRepository implements LifeRepository {
       await this.db.execute("DELETE FROM summaries");
       await this.db.execute("DELETE FROM settings");
       await this.saveSettings(data.settings);
-      for (const segment of sortSegments(data.segments)) {
+      for (const segment of data.segments) {
         await this.insertSegment(segment);
       }
-      for (const summary of sortSummaries(data.summaries)) {
+      for (const summary of data.summaries) {
         await this.saveSummary(summary);
       }
       await this.db.execute("COMMIT");
@@ -272,12 +274,19 @@ class TauriSqlRepository implements LifeRepository {
   }
 
   async saveSummary(summary: SummaryEntry): Promise<void> {
+    const normalizedSummary = buildLifeDataExport({
+      settings: DEFAULT_SETTINGS,
+      segments: [],
+      summaries: [summary],
+      exportedAt: new Date().toISOString(),
+    }).summaries[0];
+
     await this.db.execute(
       `INSERT INTO summaries (scope, summary_key, content, updated_at)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT(scope, summary_key)
         DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
-      summaryToParams(normalizeImportedSummary(summary, 0)),
+      summaryToParams(normalizedSummary),
     );
   }
 
@@ -445,205 +454,4 @@ function rowToSummary(row: SummaryRow): SummaryEntry {
 
 function summaryToParams(summary: SummaryEntry): unknown[] {
   return [summary.scope, summary.key, summary.content, summary.updatedAt];
-}
-
-export function parseLifeDataExport(raw: string): LifeDataExport {
-  let parsed: unknown;
-
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("导入文件不是有效的 JSON。");
-  }
-
-  if (!isRecord(parsed)) {
-    throw new Error("导入文件格式不正确。");
-  }
-
-  const settings = normalizeImportedSettings(parsed.settings);
-  const segmentValues = parsed.segments;
-  if (!Array.isArray(segmentValues)) {
-    throw new Error("导入文件缺少记录列表。");
-  }
-  const summaryValues = Array.isArray(parsed.summaries) ? parsed.summaries : [];
-
-  const segments = sortSegments(
-    segmentValues.map((value, index) => normalizeImportedSegment(value, index, settings)),
-  );
-  const summaries = sortSummaries(summaryValues.map((value, index) => normalizeImportedSummary(value, index)));
-  assertImportConsistency(segments);
-
-  return {
-    app: EXPORT_APP,
-    version: EXPORT_VERSION,
-    exportedAt: readOptionalIso(parsed.exportedAt) ?? new Date().toISOString(),
-    settings,
-    segments,
-    summaries,
-  };
-}
-
-function buildDataExport(data: StoredData): LifeDataExport {
-  const settings = normalizeImportedSettings(data.settings);
-  const segments = sortSegments(
-    data.segments.map((segment, index) => normalizeImportedSegment(segment, index, settings)),
-  );
-  const summaries = sortSummaries(data.summaries.map((summary, index) => normalizeImportedSummary(summary, index)));
-
-  return {
-    app: EXPORT_APP,
-    version: EXPORT_VERSION,
-    exportedAt: new Date().toISOString(),
-    settings,
-    segments,
-    summaries,
-  };
-}
-
-function normalizeImportedSettings(value: unknown): LifeSettings {
-  const source = isRecord(value) ? value : {};
-  return {
-    busyMinutes: readBoundedInteger(source.busyMinutes, DEFAULT_SETTINGS.busyMinutes, 1, 240),
-    restMinutes: readBoundedInteger(source.restMinutes, DEFAULT_SETTINGS.restMinutes, 1, 120),
-    soundEnabled: typeof source.soundEnabled === "boolean" ? source.soundEnabled : DEFAULT_SETTINGS.soundEnabled,
-    alwaysOnTop: typeof source.alwaysOnTop === "boolean" ? source.alwaysOnTop : DEFAULT_SETTINGS.alwaysOnTop,
-    autostart: typeof source.autostart === "boolean" ? source.autostart : DEFAULT_SETTINGS.autostart,
-    closeWindowBehavior: isCloseWindowBehavior(source.closeWindowBehavior)
-      ? source.closeWindowBehavior
-      : DEFAULT_SETTINGS.closeWindowBehavior,
-    quickTasks: normalizeQuickTasks(source.quickTasks),
-    reminderPolicy: DEFAULT_SETTINGS.reminderPolicy,
-  };
-}
-
-function normalizeImportedSegment(value: unknown, index: number, settings: LifeSettings): TimelineSegment {
-  if (!isRecord(value)) {
-    throw new Error(`导入文件中第 ${index + 1} 条记录格式不正确。`);
-  }
-
-  const state = readTrackableState(value.state, index);
-  const startedAt = readRequiredIso(value.startedAt, "开始时间", index);
-  const endedAt = value.endedAt === null ? null : readRequiredIso(value.endedAt, "结束时间", index);
-  const plannedEndAt =
-    readOptionalIso(value.plannedEndAt) ?? addMinutes(startedAt, getTargetMinutes(state, settings));
-  const nowIso = new Date().toISOString();
-
-  if (endedAt && new Date(endedAt).getTime() <= new Date(startedAt).getTime()) {
-    throw new Error(`导入文件中第 ${index + 1} 条记录的结束时间需要晚于开始时间。`);
-  }
-
-  return {
-    id: readRequiredString(value.id, "记录 ID", index),
-    stateRunId: readRequiredString(value.stateRunId, "状态 ID", index),
-    state,
-    taskName: typeof value.taskName === "string" ? normalizeTaskName(value.taskName) : null,
-    note: typeof value.note === "string" ? normalizeNote(value.note) : null,
-    startedAt,
-    endedAt,
-    plannedEndAt,
-    createdAt: readOptionalIso(value.createdAt) ?? nowIso,
-    updatedAt: readOptionalIso(value.updatedAt) ?? nowIso,
-    isEdited: typeof value.isEdited === "boolean" ? value.isEdited : Boolean(value.isEdited),
-  };
-}
-
-function normalizeImportedSummary(value: unknown, index: number): SummaryEntry {
-  if (!isRecord(value)) {
-    throw new Error(`导入文件中第 ${index + 1} 条总结格式不正确。`);
-  }
-
-  const scope = readSummaryScope(value.scope, index);
-  const key = readRequiredString(value.key, "总结日期", index);
-  const content = typeof value.content === "string" ? value.content.trim() : "";
-  const updatedAt = readOptionalIso(value.updatedAt) ?? new Date().toISOString();
-
-  return {
-    scope,
-    key,
-    content,
-    updatedAt,
-  };
-}
-
-function assertImportConsistency(segments: TimelineSegment[]): void {
-  const ids = new Set<string>();
-  let openCount = 0;
-
-  for (const segment of segments) {
-    if (ids.has(segment.id)) {
-      throw new Error(`导入文件中存在重复记录 ID：${segment.id}`);
-    }
-    ids.add(segment.id);
-
-    if (segment.endedAt === null) {
-      openCount += 1;
-    }
-  }
-
-  if (openCount > 1) {
-    throw new Error("导入文件中存在多个进行中的记录。");
-  }
-}
-
-function sortSegments(segments: TimelineSegment[]): TimelineSegment[] {
-  return [...segments].sort((left, right) => left.startedAt.localeCompare(right.startedAt));
-}
-
-function sortSummaries(summaries: SummaryEntry[]): SummaryEntry[] {
-  return [...summaries].sort(
-    (left, right) => left.scope.localeCompare(right.scope) || left.key.localeCompare(right.key),
-  );
-}
-
-function normalizeQuickTasks(value: unknown): string[] {
-  if (!Array.isArray(value)) return DEFAULT_SETTINGS.quickTasks;
-
-  const tasks = value
-    .filter((task): task is string => typeof task === "string")
-    .map((task) => task.trim())
-    .filter(Boolean);
-
-  return [...new Set(tasks)];
-}
-
-function readTrackableState(value: unknown, index: number): TrackableState {
-  if (value === "busy" || value === "rest") return value;
-  throw new Error(`导入文件中第 ${index + 1} 条记录的状态无效。`);
-}
-
-function readSummaryScope(value: unknown, index: number): SummaryScope {
-  if (value === "day" || value === "week") return value;
-  throw new Error(`导入文件中第 ${index + 1} 条总结的范围无效。`);
-}
-
-function readRequiredString(value: unknown, label: string, index: number): string {
-  if (typeof value === "string" && value.trim()) return value.trim();
-  throw new Error(`导入文件中第 ${index + 1} 条记录的${label}无效。`);
-}
-
-function readRequiredIso(value: unknown, label: string, index: number): string {
-  const iso = readOptionalIso(value);
-  if (iso) return iso;
-  throw new Error(`导入文件中第 ${index + 1} 条记录的${label}无效。`);
-}
-
-function readOptionalIso(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const time = new Date(value).getTime();
-  if (!Number.isFinite(time)) return null;
-  return new Date(time).toISOString();
-}
-
-function readBoundedInteger(value: unknown, fallback: number, min: number, max: number): number {
-  const numeric = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(numeric)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(numeric)));
-}
-
-function isCloseWindowBehavior(value: unknown): value is LifeSettings["closeWindowBehavior"] {
-  return value === "ask" || value === "minimize-to-tray" || value === "quit";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

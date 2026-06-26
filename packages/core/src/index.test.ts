@@ -1,14 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SETTINGS,
+  buildLifeDataExport,
   calculateTodayStats,
   canMergeSegments,
   createManualSegment,
   createSegment,
+  dateFromLocalDateKey,
   deriveTimerSnapshot,
   extendDueAt,
+  getRunExtensionMinutes,
+  getRunPlannedEndAt,
+  getWeekKeyForDateKey,
+  isLocalDateKey,
   mergeSegments,
+  parseLifeDataExport,
+  shiftLocalDateKey,
   splitSegmentAt,
+  toLocalDateKey,
 } from "./index";
 
 describe("timer snapshot", () => {
@@ -402,5 +411,167 @@ describe("today stats", () => {
     expect(segment.plannedEndAt).toBe("2026-05-21T03:30:00.000Z");
     expect(segment.note).toBe("会后补记");
     expect(segment.isEdited).toBe(true);
+  });
+});
+
+describe("data export contract", () => {
+  it("normalizes imported data and sorts records for every app shell", () => {
+    const parsed = parseLifeDataExport(
+      JSON.stringify({
+        settings: {
+          busyMinutes: "25",
+          restMinutes: 5.4,
+          quickTasks: [" 写代码 ", "写代码", "", "阅读"],
+          closeWindowBehavior: "quit",
+        },
+        segments: [
+          {
+            id: "segment_b",
+            stateRunId: "run_b",
+            state: "rest",
+            taskName: " 喝水 ",
+            startedAt: "2026-05-21T02:00:00.000Z",
+            endedAt: "2026-05-21T02:05:00.000Z",
+          },
+          {
+            id: "segment_a",
+            stateRunId: "run_a",
+            state: "busy",
+            taskName: " 写代码 ",
+            note: " 复盘 ",
+            startedAt: "2026-05-21T01:00:00.000Z",
+            endedAt: "2026-05-21T01:20:00.000Z",
+          },
+        ],
+        summaries: [
+          {
+            scope: "week",
+            key: "2026-05-18",
+            content: " 周总结 ",
+            updatedAt: "2026-05-21T03:00:00.000Z",
+          },
+        ],
+      }),
+    );
+
+    expect(parsed.app).toBe("LifeMonitor");
+    expect(parsed.version).toBe(2);
+    expect(parsed.settings.busyMinutes).toBe(25);
+    expect(parsed.settings.restMinutes).toBe(5);
+    expect(parsed.settings.quickTasks).toEqual(["写代码", "阅读"]);
+    expect(parsed.segments.map((segment) => segment.id)).toEqual(["segment_a", "segment_b"]);
+    expect(parsed.segments[0].taskName).toBe("写代码");
+    expect(parsed.segments[0].note).toBe("复盘");
+    expect(parsed.segments[0].plannedEndAt).toBe("2026-05-21T01:25:00.000Z");
+    expect(parsed.summaries[0].content).toBe("周总结");
+  });
+
+  it("rejects imports with multiple open segments", () => {
+    expect(() =>
+      parseLifeDataExport(
+        JSON.stringify({
+          settings: DEFAULT_SETTINGS,
+          segments: [
+            {
+              id: "segment_a",
+              stateRunId: "run_a",
+              state: "busy",
+              startedAt: "2026-05-21T01:00:00.000Z",
+              endedAt: null,
+            },
+            {
+              id: "segment_b",
+              stateRunId: "run_b",
+              state: "rest",
+              startedAt: "2026-05-21T02:00:00.000Z",
+              endedAt: null,
+            },
+          ],
+        }),
+      ),
+    ).toThrow("多个进行中的记录");
+  });
+
+  it("builds a portable export from stored data", () => {
+    const segment = createSegment({
+      state: "busy",
+      taskName: " 写代码 ",
+      nowIso: "2026-05-21T01:00:00.000Z",
+      settings: DEFAULT_SETTINGS,
+    });
+
+    const data = buildLifeDataExport({
+      settings: { ...DEFAULT_SETTINGS, busyMinutes: 30 },
+      segments: [segment],
+      summaries: [],
+      exportedAt: "2026-05-21T02:00:00.000Z",
+    });
+
+    expect(data).toMatchObject({
+      app: "LifeMonitor",
+      version: 2,
+      exportedAt: "2026-05-21T02:00:00.000Z",
+      settings: { busyMinutes: 30 },
+      segments: [{ id: segment.id, taskName: "写代码" }],
+      summaries: [],
+    });
+  });
+});
+
+describe("local date keys", () => {
+  it("formats, validates, and shifts local date keys", () => {
+    expect(toLocalDateKey(new Date(2026, 4, 21, 23, 30))).toBe("2026-05-21");
+    expect(isLocalDateKey("2026-05-21")).toBe(true);
+    expect(isLocalDateKey("2026-5-21")).toBe(false);
+    expect(shiftLocalDateKey("2026-05-21", -1)).toBe("2026-05-20");
+    expect(shiftLocalDateKey("2026-05-21", 10)).toBe("2026-05-31");
+    expect(dateFromLocalDateKey("2026-05-21")).toEqual(new Date(2026, 4, 21));
+  });
+
+  it("uses Monday as the week key", () => {
+    expect(getWeekKeyForDateKey("2026-05-18")).toBe("2026-05-18");
+    expect(getWeekKeyForDateKey("2026-05-21")).toBe("2026-05-18");
+    expect(getWeekKeyForDateKey("2026-05-24")).toBe("2026-05-18");
+  });
+});
+
+describe("state run planning", () => {
+  it("calculates planned end from the first segment in a split run", () => {
+    const first = {
+      ...createSegment({
+        state: "busy",
+        taskName: "写代码",
+        nowIso: "2026-05-21T01:00:00.000Z",
+        settings: { ...DEFAULT_SETTINGS, busyMinutes: 50 },
+        stateRunId: "run_busy",
+      }),
+      endedAt: "2026-05-21T01:20:00.000Z",
+    };
+    const active = createSegment({
+      state: "busy",
+      taskName: "写代码",
+      nowIso: "2026-05-21T01:25:00.000Z",
+      settings: { ...DEFAULT_SETTINGS, busyMinutes: 50 },
+      stateRunId: "run_busy",
+    });
+
+    expect(getRunPlannedEndAt(active, [first], { ...DEFAULT_SETTINGS, busyMinutes: 50 }, 5)).toBe(
+      "2026-05-21T01:55:00.000Z",
+    );
+  });
+
+  it("preserves the largest known extension for an active run", () => {
+    const active = {
+      ...createSegment({
+        state: "rest",
+        taskName: "喝水",
+        nowIso: "2026-05-21T02:00:00.000Z",
+        settings: { ...DEFAULT_SETTINGS, restMinutes: 10 },
+      }),
+      plannedEndAt: "2026-05-21T02:20:00.000Z",
+    };
+
+    expect(getRunExtensionMinutes(active, [], { ...DEFAULT_SETTINGS, restMinutes: 10 }, 3)).toBe(10);
+    expect(getRunExtensionMinutes(active, [], { ...DEFAULT_SETTINGS, restMinutes: 10 }, 15)).toBe(15);
   });
 });

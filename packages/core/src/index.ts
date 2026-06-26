@@ -40,6 +40,22 @@ export interface SummaryEntry {
   updatedAt: string;
 }
 
+export interface LifeDataExport {
+  app: "LifeMonitor";
+  version: 2;
+  exportedAt: string;
+  settings: LifeSettings;
+  segments: TimelineSegment[];
+  summaries: SummaryEntry[];
+}
+
+export interface LifeDataExportInput {
+  settings: unknown;
+  segments: unknown[];
+  summaries: unknown[];
+  exportedAt?: string;
+}
+
 export interface TimerSnapshot {
   state: LifeState;
   taskName: string | null;
@@ -83,6 +99,8 @@ export const DEFAULT_SETTINGS: LifeSettings = {
 };
 
 export const UNMARKED_TASK = "未标记";
+export const EXPORT_APP = "LifeMonitor";
+export const EXPORT_VERSION = 2;
 
 export function createId(prefix = "lm"): string {
   const cryptoApi = globalThis.crypto;
@@ -329,6 +347,74 @@ export function getLocalDayRange(date = new Date()): { startIso: string; endIso:
   };
 }
 
+export function toLocalDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = (date.getMonth() + 1).toString().padStart(2, "0");
+  const day = date.getDate().toString().padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function isLocalDateKey(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+export function dateFromLocalDateKey(value: string): Date {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+export function getDayRangeForDateKey(value: string): { startIso: string; endIso: string } {
+  return getLocalDayRange(dateFromLocalDateKey(value));
+}
+
+export function shiftLocalDateKey(value: string, days: number): string {
+  const date = dateFromLocalDateKey(value);
+  date.setDate(date.getDate() + days);
+  return toLocalDateKey(date);
+}
+
+export function getWeekKeyForDateKey(value: string): string {
+  const date = dateFromLocalDateKey(value);
+  const day = date.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + mondayOffset);
+  return toLocalDateKey(date);
+}
+
+export function getRunPlannedEndAt(
+  activeSegment: TimelineSegment,
+  segments: TimelineSegment[],
+  settings: LifeSettings,
+  extensionMinutes: number,
+): string {
+  const runStartedAt = getRunStartedAt(activeSegment, segments);
+  return addMinutes(runStartedAt, getTargetMinutes(activeSegment.state, settings) + extensionMinutes);
+}
+
+export function getRunExtensionMinutes(
+  activeSegment: TimelineSegment,
+  segments: TimelineSegment[],
+  settings: LifeSettings,
+  trackedExtensionMinutes: number,
+): number {
+  const runStartedAt = getRunStartedAt(activeSegment, segments);
+  const baseEnd = addMinutes(runStartedAt, getTargetMinutes(activeSegment.state, settings));
+  const persistedExtensionMinutes = Math.round(
+    (new Date(activeSegment.plannedEndAt).getTime() - new Date(baseEnd).getTime()) / 60_000,
+  );
+
+  return Math.max(0, trackedExtensionMinutes, persistedExtensionMinutes);
+}
+
+function getRunStartedAt(activeSegment: TimelineSegment, segments: TimelineSegment[]): string {
+  return [...segments, activeSegment]
+    .filter((segment) => segment.stateRunId === activeSegment.stateRunId)
+    .reduce(
+      (earliest, segment) => (segment.startedAt < earliest ? segment.startedAt : earliest),
+      activeSegment.startedAt,
+    );
+}
+
 export function formatDuration(totalSeconds: number): string {
   const seconds = Math.max(0, Math.floor(totalSeconds));
   const hours = Math.floor(seconds / 3600);
@@ -356,6 +442,198 @@ export function mergeNotes(left?: string | null, right?: string | null): string 
   if (!leftNote) return rightNote;
   if (!rightNote || leftNote === rightNote) return leftNote;
   return `${leftNote}\n${rightNote}`;
+}
+
+export function parseLifeDataExport(raw: string): LifeDataExport {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("导入文件不是有效的 JSON。");
+  }
+
+  if (!isRecord(parsed)) {
+    throw new Error("导入文件格式不正确。");
+  }
+
+  const segmentValues = parsed.segments;
+  if (!Array.isArray(segmentValues)) {
+    throw new Error("导入文件缺少记录列表。");
+  }
+
+  return buildLifeDataExport({
+    settings: parsed.settings,
+    segments: segmentValues,
+    summaries: Array.isArray(parsed.summaries) ? parsed.summaries : [],
+    exportedAt: readOptionalIso(parsed.exportedAt) ?? new Date().toISOString(),
+  });
+}
+
+export function buildLifeDataExport(data: LifeDataExportInput): LifeDataExport {
+  const settings = normalizeImportedSettings(data.settings);
+  const segments = sortSegments(
+    data.segments.map((segment, index) => normalizeImportedSegment(segment, index, settings)),
+  );
+  const summaries = sortSummaries(data.summaries.map((summary, index) => normalizeImportedSummary(summary, index)));
+  assertImportConsistency(segments);
+
+  return {
+    app: EXPORT_APP,
+    version: EXPORT_VERSION,
+    exportedAt: readOptionalIso(data.exportedAt) ?? new Date().toISOString(),
+    settings,
+    segments,
+    summaries,
+  };
+}
+
+function normalizeImportedSettings(value: unknown): LifeSettings {
+  const source = isRecord(value) ? value : {};
+  return {
+    busyMinutes: readBoundedInteger(source.busyMinutes, DEFAULT_SETTINGS.busyMinutes, 1, 240),
+    restMinutes: readBoundedInteger(source.restMinutes, DEFAULT_SETTINGS.restMinutes, 1, 120),
+    soundEnabled: typeof source.soundEnabled === "boolean" ? source.soundEnabled : DEFAULT_SETTINGS.soundEnabled,
+    alwaysOnTop: typeof source.alwaysOnTop === "boolean" ? source.alwaysOnTop : DEFAULT_SETTINGS.alwaysOnTop,
+    autostart: typeof source.autostart === "boolean" ? source.autostart : DEFAULT_SETTINGS.autostart,
+    closeWindowBehavior: isCloseWindowBehavior(source.closeWindowBehavior)
+      ? source.closeWindowBehavior
+      : DEFAULT_SETTINGS.closeWindowBehavior,
+    quickTasks: normalizeQuickTasks(source.quickTasks),
+    reminderPolicy: DEFAULT_SETTINGS.reminderPolicy,
+  };
+}
+
+function normalizeImportedSegment(value: unknown, index: number, settings: LifeSettings): TimelineSegment {
+  if (!isRecord(value)) {
+    throw new Error(`导入文件中第 ${index + 1} 条记录格式不正确。`);
+  }
+
+  const state = readTrackableState(value.state, index);
+  const startedAt = readRequiredIso(value.startedAt, "开始时间", index);
+  const endedAt = value.endedAt === null ? null : readRequiredIso(value.endedAt, "结束时间", index);
+  const plannedEndAt =
+    readOptionalIso(value.plannedEndAt) ?? addMinutes(startedAt, getTargetMinutes(state, settings));
+  const nowIso = new Date().toISOString();
+
+  if (endedAt && new Date(endedAt).getTime() <= new Date(startedAt).getTime()) {
+    throw new Error(`导入文件中第 ${index + 1} 条记录的结束时间需要晚于开始时间。`);
+  }
+
+  return {
+    id: readRequiredString(value.id, "记录 ID", index),
+    stateRunId: readRequiredString(value.stateRunId, "状态 ID", index),
+    state,
+    taskName: typeof value.taskName === "string" ? normalizeTaskName(value.taskName) : null,
+    note: typeof value.note === "string" ? normalizeNote(value.note) : null,
+    startedAt,
+    endedAt,
+    plannedEndAt,
+    createdAt: readOptionalIso(value.createdAt) ?? nowIso,
+    updatedAt: readOptionalIso(value.updatedAt) ?? nowIso,
+    isEdited: typeof value.isEdited === "boolean" ? value.isEdited : Boolean(value.isEdited),
+  };
+}
+
+function normalizeImportedSummary(value: unknown, index: number): SummaryEntry {
+  if (!isRecord(value)) {
+    throw new Error(`导入文件中第 ${index + 1} 条总结格式不正确。`);
+  }
+
+  const scope = readSummaryScope(value.scope, index);
+  const key = readRequiredString(value.key, "总结日期", index);
+  const content = typeof value.content === "string" ? value.content.trim() : "";
+  const updatedAt = readOptionalIso(value.updatedAt) ?? new Date().toISOString();
+
+  return {
+    scope,
+    key,
+    content,
+    updatedAt,
+  };
+}
+
+function assertImportConsistency(segments: TimelineSegment[]): void {
+  const ids = new Set<string>();
+  let openCount = 0;
+
+  for (const segment of segments) {
+    if (ids.has(segment.id)) {
+      throw new Error(`导入文件中存在重复记录 ID：${segment.id}`);
+    }
+    ids.add(segment.id);
+
+    if (segment.endedAt === null) {
+      openCount += 1;
+    }
+  }
+
+  if (openCount > 1) {
+    throw new Error("导入文件中存在多个进行中的记录。");
+  }
+}
+
+function sortSegments(segments: TimelineSegment[]): TimelineSegment[] {
+  return [...segments].sort((left, right) => left.startedAt.localeCompare(right.startedAt));
+}
+
+function sortSummaries(summaries: SummaryEntry[]): SummaryEntry[] {
+  return [...summaries].sort(
+    (left, right) => left.scope.localeCompare(right.scope) || left.key.localeCompare(right.key),
+  );
+}
+
+function normalizeQuickTasks(value: unknown): string[] {
+  if (!Array.isArray(value)) return DEFAULT_SETTINGS.quickTasks;
+
+  const tasks = value
+    .filter((task): task is string => typeof task === "string")
+    .map((task) => task.trim())
+    .filter(Boolean);
+
+  return [...new Set(tasks)];
+}
+
+function readTrackableState(value: unknown, index: number): TrackableState {
+  if (value === "busy" || value === "rest") return value;
+  throw new Error(`导入文件中第 ${index + 1} 条记录的状态无效。`);
+}
+
+function readSummaryScope(value: unknown, index: number): SummaryScope {
+  if (value === "day" || value === "week") return value;
+  throw new Error(`导入文件中第 ${index + 1} 条总结的范围无效。`);
+}
+
+function readRequiredString(value: unknown, label: string, index: number): string {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  throw new Error(`导入文件中第 ${index + 1} 条记录的${label}无效。`);
+}
+
+function readRequiredIso(value: unknown, label: string, index: number): string {
+  const iso = readOptionalIso(value);
+  if (iso) return iso;
+  throw new Error(`导入文件中第 ${index + 1} 条记录的${label}无效。`);
+}
+
+function readOptionalIso(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return null;
+  return new Date(time).toISOString();
+}
+
+function readBoundedInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(numeric)));
+}
+
+function isCloseWindowBehavior(value: unknown): value is LifeSettings["closeWindowBehavior"] {
+  return value === "ask" || value === "minimize-to-tray" || value === "quit";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function calculateOvertimeSeconds(segment: TimelineSegment, clippedStartIso: string, clippedEndIso: string): number {

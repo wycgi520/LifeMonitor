@@ -11,7 +11,7 @@
     "dev": "npm run dev -w @lifemonitor/desktop",
     "desktop": "npm run tauri:dev -w @lifemonitor/desktop",
     "build": "npm run build -w @lifemonitor/core && npm run build -w @lifemonitor/desktop",
-    "test": "npm run test -w @lifemonitor/core",
+    "test": "npm run test -w @lifemonitor/core && npm run test -w @lifemonitor/desktop",
     "lint": "npm run lint -w @lifemonitor/desktop"
   },
   "devDependencies": {

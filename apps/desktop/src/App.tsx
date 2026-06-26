@@ -56,6 +56,41 @@ import {
   type TrackableState,
 } from "@lifemonitor/core";
 import "./App.css";
+import {
+  DAY_MINUTES,
+  RULER_STEP_MINUTES,
+  clamp,
+  clampMinutes,
+  durationFor,
+  floorMinuteToStep,
+  formatDateLabel,
+  formatDateTimeLabel,
+  formatHourMark,
+  formatMiniDuration,
+  formatMinuteLabel,
+  formatRulerZoomLabel,
+  getLocalMinuteOfDay,
+  hasTimelineDraftChanges,
+  isIsoOnLocalDate,
+  isPersistableTimelineDraft,
+  isoFromLocalMinute,
+  isoFromLocalTimeInput,
+  localDateFromKey,
+  maybeFromLocalInputValue,
+  midpointIso,
+  minuteFromTimeInput,
+  normalizeTimelineDraft,
+  segmentOvertimeSeconds,
+  segmentUndertimeSeconds,
+  snapMinute,
+  timeInputValueFromIso,
+  timeInputValueFromMinute,
+  toDateInputValue,
+  toLocalInputValue,
+  toRulerPercent,
+} from "./lib/time";
+import { DonutChart, Metric, TaskStatsList } from "./components/metrics";
+import { getTimeDistributionSegments } from "./components/metrics-data";
 import { isTauriRuntime } from "./services/repository";
 import { useLifeMonitor } from "./services/useLifeMonitor";
 import {
@@ -68,8 +103,6 @@ import {
 } from "./services/platform";
 
 const WINDOW_MODE_STORAGE_KEY = "lifemonitor:window-mode:v1";
-const RULER_STEP_MINUTES = 1;
-const DAY_MINUTES = 24 * 60;
 const DEFAULT_BACKFILL_MINUTES = 30;
 const RULER_BASE_WIDTH_PX = 760;
 const RULER_ZOOM_LEVELS = [1, 1.5, 2.5, 4] as const;
@@ -110,19 +143,6 @@ const pageCopy: Record<PageId, { eyebrow: string; title: string }> = {
   stats: { eyebrow: "数据回顾", title: "统计" },
   settings: { eyebrow: "应用偏好", title: "设置" },
 };
-
-const donutColors = {
-  busy: "#d9982b",
-  rest: "#0f837d",
-  idle: "#94a3b8",
-} as const;
-
-interface DonutSegment {
-  key: string;
-  label: string;
-  value: number;
-  color: string;
-}
 
 function App() {
   const monitor = useLifeMonitor();
@@ -1497,110 +1517,6 @@ function MiniReminderWindow({
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function DonutChart({
-  title,
-  segments,
-  compact = false,
-}: {
-  title: string;
-  segments: DonutSegment[];
-  compact?: boolean;
-}) {
-  const total = segments.reduce((sum, segment) => sum + segment.value, 0);
-  const visibleSegments = segments.filter((segment) => segment.value > 0);
-  let cursor = 0;
-  const gradient =
-    total > 0
-      ? `conic-gradient(${visibleSegments
-          .map((segment) => {
-            const start = cursor;
-            const end = cursor + (segment.value / total) * 100;
-            cursor = end;
-            return `${segment.color} ${start}% ${end}%`;
-          })
-          .join(", ")})`
-      : "conic-gradient(#e8eef0 0% 100%)";
-
-  return (
-    <div className={`donut-card ${compact ? "compact" : ""}`}>
-      <div className="donut-visual" style={{ background: gradient }} aria-hidden="true">
-        <div className="donut-hole">
-          <strong>{total > 0 ? formatDuration(total) : "0秒"}</strong>
-          <span>合计</span>
-        </div>
-      </div>
-      <div className="donut-meta">
-        <h3>{title}</h3>
-        <div className="donut-legend">
-          {segments.map((segment) => {
-            const ratio = percentage(segment.value, total);
-            return (
-              <div key={segment.key} className="donut-legend-row">
-                <span className="donut-swatch" style={{ backgroundColor: segment.color }} />
-                <span>{segment.label}</span>
-                <strong>{formatDuration(segment.value)}</strong>
-                <em>{ratio}%</em>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function getTimeDistributionSegments(stats: MonitorController["stats"]): DonutSegment[] {
-  return [
-    { key: "busy", label: "忙碌", value: stats.busySeconds, color: donutColors.busy },
-    { key: "rest", label: "休息", value: stats.restSeconds, color: donutColors.rest },
-    { key: "idle", label: "空闲", value: stats.idleSeconds, color: donutColors.idle },
-  ];
-}
-
-function TaskStatsList({
-  tasks,
-  emptyText,
-  showBars = false,
-}: {
-  tasks: Array<{ taskName: string; seconds: number }>;
-  emptyText: string;
-  showBars?: boolean;
-}) {
-  const maxSeconds = Math.max(...tasks.map((task) => task.seconds), 0);
-
-  return (
-    <div className="task-stats">
-      {tasks.length === 0 ? (
-        <p className="muted">{emptyText}</p>
-      ) : (
-        tasks.map((task) => {
-          const ratio = percentage(task.seconds, maxSeconds);
-          return (
-            <div key={task.taskName} className={`task-stat-row ${showBars ? "with-bar" : ""}`}>
-              <span>{task.taskName}</span>
-              <strong>{formatDuration(task.seconds)}</strong>
-              {showBars && (
-                <div className="progress-track task-progress">
-                  <div className="progress-bar busy" style={{ width: `${ratio}%` }} />
-                </div>
-              )}
-            </div>
-          );
-        })
-      )}
-    </div>
-  );
-}
-
 function TimelineDateTimeInput({
   isoDate,
   selectedDate,
@@ -1942,76 +1858,6 @@ function minuteFromClientX(clientX: number, element: HTMLElement, maxSelectableM
   return clamp(snapMinute(ratio * DAY_MINUTES), 0, maxSelectableMinute);
 }
 
-function minuteFromTimeInput(value: string): number | null {
-  const match = /^(\d{2}):(\d{2})$/.exec(value);
-  if (!match) return null;
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  if (hours > 23 || minutes > 59) return null;
-  return snapMinute(hours * 60 + minutes);
-}
-
-function isoFromLocalMinute(selectedDate: string, minute: number): string {
-  const date = localDateFromKey(selectedDate);
-  date.setMinutes(minute, 0, 0);
-  return date.toISOString();
-}
-
-function timeInputValueFromMinute(minute: number): string {
-  const safeMinute = clamp(Math.floor(minute), 0, DAY_MINUTES - RULER_STEP_MINUTES);
-  const hours = Math.floor(safeMinute / 60);
-  const minutes = safeMinute % 60;
-  return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
-}
-
-function formatMinuteLabel(minute: number): string {
-  if (minute >= DAY_MINUTES) return "24:00";
-  return timeInputValueFromMinute(minute);
-}
-
-function formatHourMark(minute: number): string {
-  if (minute >= DAY_MINUTES) return "24";
-  return `${Math.floor(minute / 60).toString().padStart(2, "0")}:00`;
-}
-
-function formatRulerZoomLabel(zoom: number): string {
-  return `${zoom.toFixed(zoom % 1 === 0 ? 0 : 1)}x`;
-}
-
-function toRulerPercent(minute: number): number {
-  return (minute / DAY_MINUTES) * 100;
-}
-
-function snapMinute(minute: number): number {
-  return Math.round(minute / RULER_STEP_MINUTES) * RULER_STEP_MINUTES;
-}
-
-function floorMinuteToStep(minute: number): number {
-  return Math.floor(minute / RULER_STEP_MINUTES) * RULER_STEP_MINUTES;
-}
-
-function getLocalMinuteOfDay(date: Date): number {
-  return date.getHours() * 60 + date.getMinutes();
-}
-
-function localDateFromKey(value: string): Date {
-  const [year, month, day] = value.split("-").map(Number);
-  return new Date(year, month - 1, day);
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function formatDateTimeLabel(isoDate: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(isoDate));
-}
-
 async function saveJsonExport(data: unknown, fileName: string): Promise<string> {
   const content = JSON.stringify(data, null, 2);
 
@@ -2036,131 +1882,12 @@ function downloadJson(content: string, fileName: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-function durationFor(segment: TimelineSegment): number {
-  const end = segment.endedAt ?? new Date().toISOString();
-  return Math.max(0, Math.round((new Date(end).getTime() - new Date(segment.startedAt).getTime()) / 1000));
-}
-
-function segmentOvertimeSeconds(segment: TimelineSegment): number {
-  const end = segment.endedAt ?? new Date().toISOString();
-  return Math.max(0, Math.round((new Date(end).getTime() - new Date(segment.plannedEndAt).getTime()) / 1000));
-}
-
-function segmentUndertimeSeconds(segment: TimelineSegment): number {
-  if (!segment.endedAt) return 0;
-  return Math.max(
-    0,
-    Math.round((new Date(segment.plannedEndAt).getTime() - new Date(segment.endedAt).getTime()) / 1000),
-  );
-}
-
-function midpointIso(segment: TimelineSegment): string {
-  const end = segment.endedAt ?? new Date().toISOString();
-  const midpoint = new Date((new Date(segment.startedAt).getTime() + new Date(end).getTime()) / 2);
-  return midpoint.toISOString();
-}
-
-function toLocalInputValue(isoDate: string): string {
-  const date = new Date(isoDate);
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
-}
-
-function maybeFromLocalInputValue(value: string): string | null {
-  const time = new Date(value).getTime();
-  return Number.isFinite(time) ? new Date(time).toISOString() : null;
-}
-
-function isoFromLocalTimeInput(selectedDate: string, value: string): string | null {
-  const minute = minuteFromTimeInput(value);
-  return minute === null ? null : isoFromLocalMinute(selectedDate, minute);
-}
-
-function timeInputValueFromIso(isoDate: string): string {
-  return timeInputValueFromMinute(getLocalMinuteOfDay(new Date(isoDate)));
-}
-
-function isIsoOnLocalDate(isoDate: string, selectedDate: string): boolean {
-  return toDateInputValue(new Date(isoDate)) === selectedDate;
-}
-
-function normalizeTimelineDraft(segment: TimelineSegment): TimelineSegment | null {
-  const startedAt = maybeFromLocalInputValue(segment.startedAt);
-  const endedAt = segment.endedAt ? maybeFromLocalInputValue(segment.endedAt) : null;
-  if (!startedAt || (segment.endedAt && !endedAt)) return null;
-
-  return {
-    ...segment,
-    startedAt,
-    endedAt,
-  };
-}
-
-function hasTimelineDraftChanges(draft: TimelineSegment, segment: TimelineSegment): boolean {
-  return (
-    draft.state !== segment.state ||
-    draft.taskName !== segment.taskName ||
-    draft.note !== segment.note ||
-    draft.startedAt !== segment.startedAt ||
-    draft.endedAt !== segment.endedAt
-  );
-}
-
-function isPersistableTimelineDraft(segment: TimelineSegment, isActive: boolean): boolean {
-  const startMs = new Date(segment.startedAt).getTime();
-  if (!Number.isFinite(startMs)) return false;
-  if (segment.endedAt === null) return isActive;
-
-  const endMs = new Date(segment.endedAt).getTime();
-  return Number.isFinite(endMs) && endMs > startMs;
-}
-
-function toDateInputValue(date: Date): string {
-  const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, "0");
-  const day = date.getDate().toString().padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function formatDateLabel(value: string, isToday: boolean): string {
-  const [year, month, day] = value.split("-").map(Number);
-  const date = new Date(year, month - 1, day);
-  const formatted = new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    weekday: "short",
-  }).format(date);
-
-  return isToday ? `今天 ${formatted}` : formatted;
-}
-
-function clampMinutes(value: number, min: number, max: number): number {
-  if (Number.isNaN(value)) return min;
-  return Math.min(max, Math.max(min, Math.round(value)));
-}
-
-function percentage(value: number, total: number): number {
-  if (total <= 0) return 0;
-  return Math.round((value / total) * 100);
-}
-
 function getMiniTimerValue(monitor: MonitorController): string {
   if (monitor.state === "idle") return "[--]";
   if (monitor.state === "paused") return "[停]";
 
   const seconds = monitor.snapshot.isDue ? monitor.snapshot.overtimeSeconds : monitor.snapshot.remainingSeconds;
   return `[${formatMiniDuration(seconds)}]`;
-}
-
-function formatMiniDuration(totalSeconds: number): string {
-  const seconds = Math.max(0, Math.floor(totalSeconds));
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const restSeconds = seconds % 60;
-
-  if (hours > 0) return `${hours}:${minutes.toString().padStart(2, "0")}`;
-  return `${minutes}:${restSeconds.toString().padStart(2, "0")}`;
 }
 
 function getFocusTimerStatus(monitor: MonitorController): string {

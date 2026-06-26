@@ -1,18 +1,24 @@
 import {
   DEFAULT_SETTINGS,
-  addMinutes,
   calculateTodayStats,
   canMergeSegments,
   closeSegment,
   createManualSegment,
   createSegment,
+  getDayRangeForDateKey,
+  getRunExtensionMinutes,
+  getRunPlannedEndAt,
+  getWeekKeyForDateKey,
   deriveTimerSnapshot,
   extendDueAt,
-  getTargetMinutes,
-  getLocalDayRange,
+  isLocalDateKey,
   mergeSegments,
   normalizeNote,
   normalizeTaskName,
+  parseLifeDataExport,
+  shiftLocalDateKey,
+  toLocalDateKey,
+  type LifeDataExport,
   splitSegmentAt,
   type LifeSettings,
   type LifeState,
@@ -25,7 +31,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { showReminderNotification } from "./notifications";
 import { registerWindowCloseBehavior, syncPlatformSettings } from "./platform";
-import { createRepository, parseLifeDataExport, type LifeDataExport, type LifeRepository } from "./repository";
+import { createRepository, type LifeRepository } from "./repository";
 
 interface PausedContext {
   state: TrackableState;
@@ -867,72 +873,4 @@ export function useLifeMonitor(): LifeMonitorController {
     importData,
     refresh,
   };
-}
-
-function toLocalDateKey(date: Date): string {
-  const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, "0");
-  const day = date.getDate().toString().padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function isLocalDateKey(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
-function dateFromLocalDateKey(value: string): Date {
-  const [year, month, day] = value.split("-").map(Number);
-  return new Date(year, month - 1, day);
-}
-
-function getDayRangeForDateKey(value: string): { startIso: string; endIso: string } {
-  return getLocalDayRange(dateFromLocalDateKey(value));
-}
-
-function shiftLocalDateKey(value: string, days: number): string {
-  const date = dateFromLocalDateKey(value);
-  date.setDate(date.getDate() + days);
-  return toLocalDateKey(date);
-}
-
-function getWeekKeyForDateKey(value: string): string {
-  const date = dateFromLocalDateKey(value);
-  const day = date.getDay();
-  const mondayOffset = day === 0 ? -6 : 1 - day;
-  date.setDate(date.getDate() + mondayOffset);
-  return toLocalDateKey(date);
-}
-
-function getRunPlannedEndAt(
-  activeSegment: TimelineSegment,
-  segments: TimelineSegment[],
-  settings: LifeSettings,
-  extensionMinutes: number,
-): string {
-  const runStartedAt = getRunStartedAt(activeSegment, segments);
-  return addMinutes(runStartedAt, getTargetMinutes(activeSegment.state, settings) + extensionMinutes);
-}
-
-function getRunStartedAt(activeSegment: TimelineSegment, segments: TimelineSegment[]): string {
-  return [...segments, activeSegment]
-    .filter((segment) => segment.stateRunId === activeSegment.stateRunId)
-    .reduce(
-      (earliest, segment) => (segment.startedAt < earliest ? segment.startedAt : earliest),
-      activeSegment.startedAt,
-    );
-}
-
-function getRunExtensionMinutes(
-  activeSegment: TimelineSegment,
-  segments: TimelineSegment[],
-  settings: LifeSettings,
-  trackedExtensionMinutes: number,
-): number {
-  const runStartedAt = getRunStartedAt(activeSegment, segments);
-  const baseEnd = addMinutes(runStartedAt, getTargetMinutes(activeSegment.state, settings));
-  const persistedExtensionMinutes = Math.round(
-    (new Date(activeSegment.plannedEndAt).getTime() - new Date(baseEnd).getTime()) / 60_000,
-  );
-
-  return Math.max(0, trackedExtensionMinutes, persistedExtensionMinutes);
 }
