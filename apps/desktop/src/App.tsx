@@ -3,8 +3,10 @@ import {
   BellRing,
   BriefcaseBusiness,
   CalendarDays,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Check,
   Clock3,
   Coffee,
@@ -15,6 +17,7 @@ import {
   Merge,
   Minimize2,
   Pause,
+  Pencil,
   Pin,
   Play,
   Plus,
@@ -107,6 +110,19 @@ const pageCopy: Record<PageId, { eyebrow: string; title: string }> = {
   stats: { eyebrow: "数据回顾", title: "统计" },
   settings: { eyebrow: "应用偏好", title: "设置" },
 };
+
+const donutColors = {
+  busy: "#d9982b",
+  rest: "#0f837d",
+  idle: "#94a3b8",
+} as const;
+
+interface DonutSegment {
+  key: string;
+  label: string;
+  value: number;
+  color: string;
+}
 
 function App() {
   const monitor = useLifeMonitor();
@@ -395,6 +411,10 @@ function DateControls({ monitor }: { monitor: MonitorController }) {
 }
 
 function TodayPage({ monitor }: { monitor: MonitorController }) {
+  const distribution = getTimeDistributionSegments(monitor.stats);
+  const overtimeSeconds = monitor.stats.overtimeBusySeconds + monitor.stats.overtimeRestSeconds;
+  const undertimeSeconds = monitor.stats.undertimeBusySeconds + monitor.stats.undertimeRestSeconds;
+
   return (
     <section className="dashboard today-layout">
       <FocusPanel monitor={monitor} />
@@ -405,22 +425,14 @@ function TodayPage({ monitor }: { monitor: MonitorController }) {
             <h2>关键数据</h2>
           </div>
         </div>
-        <div className="stat-list compact">
-          <Metric label="忙碌总时长" value={formatDuration(monitor.stats.busySeconds)} />
-          <Metric label="休息总时长" value={formatDuration(monitor.stats.restSeconds)} />
-          <Metric label="空闲总时长" value={formatDuration(monitor.stats.idleSeconds)} />
+        <div className="summary-metric-grid">
           <Metric label="番茄钟" value={`${monitor.stats.pomodoroCount} 个`} />
-          <Metric
-            label="超时"
-            value={formatDuration(monitor.stats.overtimeBusySeconds + monitor.stats.overtimeRestSeconds)}
-          />
-          <Metric
-            label="时间不足"
-            value={formatDuration(monitor.stats.undertimeBusySeconds + monitor.stats.undertimeRestSeconds)}
-          />
+          <Metric label="超时" value={formatDuration(overtimeSeconds)} />
+          <Metric label="时间不足" value={formatDuration(undertimeSeconds)} />
           <Metric label="待补记忙碌" value={formatDuration(monitor.stats.unmarkedSeconds)} />
         </div>
-        <TaskStatsList tasks={monitor.stats.taskStats.slice(0, 4)} emptyText="今天还没有忙碌记录" />
+        <DonutChart title="时间分布" segments={distribution} compact />
+        <TaskStatsList tasks={monitor.stats.taskStats.slice(0, 3)} emptyText="今天还没有忙碌记录" />
       </section>
     </section>
   );
@@ -626,6 +638,7 @@ interface RulerSegmentBlock {
 
 function BackfillPanel({ monitor }: { monitor: MonitorController }) {
   const [draft, setDraft] = useState<BackfillDraft>(() => createDefaultBackfillDraft(monitor.selectedDate));
+  const [isExpanded, setIsExpanded] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [rulerZoom, setRulerZoom] = useState<(typeof RULER_ZOOM_LEVELS)[number]>(1);
   const rulerRef = useRef<HTMLDivElement>(null);
@@ -647,6 +660,7 @@ function BackfillPanel({ monitor }: { monitor: MonitorController }) {
   useEffect(() => {
     setDraft(createDefaultBackfillDraft(monitor.selectedDate));
     setMessage(null);
+    setIsExpanded(false);
   }, [monitor.selectedDate]);
 
   useEffect(() => {
@@ -872,9 +886,30 @@ function BackfillPanel({ monitor }: { monitor: MonitorController }) {
   const latestStartMinute = Math.max(0, Math.min(maxSelectableMinute - RULER_STEP_MINUTES, DAY_MINUTES - RULER_STEP_MINUTES));
   const latestEndInputMinute = Math.max(0, Math.min(maxSelectableMinute, DAY_MINUTES - RULER_STEP_MINUTES));
   const rulerWidth = RULER_BASE_WIDTH_PX * rulerZoom;
+  const draftDuration = formatDuration((draft.endMinute - draft.startMinute) * 60);
+
+  if (!isExpanded) {
+    return (
+      <section className="backfill-form backfill-collapsed" aria-label="补记时间">
+        <div className="backfill-collapsed-copy">
+          <p className="eyebrow">补记</p>
+          <strong>
+            {formatMinuteLabel(draft.startMinute)} - {formatMinuteLabel(draft.endMinute)}
+          </strong>
+          <span>
+            {draftDuration} · {trackableStateLabels[draft.state]} · {draft.taskName || "补记任务"}
+          </span>
+        </div>
+        <button type="button" className="icon-button" onClick={() => setIsExpanded(true)}>
+          <ChevronDown aria-hidden="true" />
+          <span>展开补记</span>
+        </button>
+      </section>
+    );
+  }
 
   return (
-    <form className="backfill-form" onSubmit={submitBackfill}>
+    <form className="backfill-form is-expanded" onSubmit={submitBackfill}>
       <div className="backfill-ruler-panel">
         <div className="backfill-ruler-head">
           <div>
@@ -898,7 +933,7 @@ function BackfillPanel({ monitor }: { monitor: MonitorController }) {
             </div>
           </div>
           <div className="backfill-ruler-tools" aria-label="时间尺缩放">
-            <span>{formatDuration((draft.endMinute - draft.startMinute) * 60)}</span>
+            <span>{draftDuration}</span>
             <button
               type="button"
               className="icon-only"
@@ -919,6 +954,10 @@ function BackfillPanel({ monitor }: { monitor: MonitorController }) {
               aria-label="放大时间尺"
             >
               <ZoomIn aria-hidden="true" />
+            </button>
+            <button type="button" className="icon-button" onClick={() => setIsExpanded(false)}>
+              <ChevronUp aria-hidden="true" />
+              <span>收起</span>
             </button>
           </div>
         </div>
@@ -1050,9 +1089,9 @@ function BackfillPanel({ monitor }: { monitor: MonitorController }) {
 }
 
 function StatsPage({ monitor, selectedDateLabel }: { monitor: MonitorController; selectedDateLabel: string }) {
-  const totalTrackedSeconds = monitor.stats.busySeconds + monitor.stats.restSeconds;
-  const busyRatio = percentage(monitor.stats.busySeconds, totalTrackedSeconds);
-  const restRatio = percentage(monitor.stats.restSeconds, totalTrackedSeconds);
+  const distribution = getTimeDistributionSegments(monitor.stats);
+  const overtimeSeconds = monitor.stats.overtimeBusySeconds + monitor.stats.overtimeRestSeconds;
+  const undertimeSeconds = monitor.stats.undertimeBusySeconds + monitor.stats.undertimeRestSeconds;
 
   return (
     <section className="stats-page">
@@ -1068,10 +1107,8 @@ function StatsPage({ monitor, selectedDateLabel }: { monitor: MonitorController;
           <Metric label="休息总时长" value={formatDuration(monitor.stats.restSeconds)} />
           <Metric label="空闲总时长" value={formatDuration(monitor.stats.idleSeconds)} />
           <Metric label="番茄钟" value={`${monitor.stats.pomodoroCount} 个`} />
-          <Metric label="超时忙碌" value={formatDuration(monitor.stats.overtimeBusySeconds)} />
-          <Metric label="超时休息" value={formatDuration(monitor.stats.overtimeRestSeconds)} />
-          <Metric label="忙碌不足" value={formatDuration(monitor.stats.undertimeBusySeconds)} />
-          <Metric label="休息不足" value={formatDuration(monitor.stats.undertimeRestSeconds)} />
+          <Metric label="超时" value={formatDuration(overtimeSeconds)} />
+          <Metric label="时间不足" value={formatDuration(undertimeSeconds)} />
           <Metric label="待补记忙碌" value={formatDuration(monitor.stats.unmarkedSeconds)} />
         </div>
       </section>
@@ -1094,17 +1131,14 @@ function StatsPage({ monitor, selectedDateLabel }: { monitor: MonitorController;
       </div>
 
       <div className="analysis-layout">
-        <section className="stats-panel">
+        <section className="stats-panel chart-panel">
           <div className="panel-head">
             <div>
               <p className="eyebrow">占比</p>
-              <h2>忙碌与休息</h2>
+              <h2>时间分布</h2>
             </div>
           </div>
-          <div className="balance-bars">
-            <RatioBar label="忙碌" value={monitor.stats.busySeconds} ratio={busyRatio} tone="busy" />
-            <RatioBar label="休息" value={monitor.stats.restSeconds} ratio={restRatio} tone="rest" />
-          </div>
+          <DonutChart title="忙碌 / 休息 / 空闲" segments={distribution} />
         </section>
 
         <section className="stats-panel">
@@ -1472,29 +1506,64 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function RatioBar({
-  label,
-  value,
-  ratio,
-  tone,
+function DonutChart({
+  title,
+  segments,
+  compact = false,
 }: {
-  label: string;
-  value: number;
-  ratio: number;
-  tone: "busy" | "rest";
+  title: string;
+  segments: DonutSegment[];
+  compact?: boolean;
 }) {
+  const total = segments.reduce((sum, segment) => sum + segment.value, 0);
+  const visibleSegments = segments.filter((segment) => segment.value > 0);
+  let cursor = 0;
+  const gradient =
+    total > 0
+      ? `conic-gradient(${visibleSegments
+          .map((segment) => {
+            const start = cursor;
+            const end = cursor + (segment.value / total) * 100;
+            cursor = end;
+            return `${segment.color} ${start}% ${end}%`;
+          })
+          .join(", ")})`
+      : "conic-gradient(#e8eef0 0% 100%)";
+
   return (
-    <div className="ratio-row">
-      <div className="ratio-meta">
-        <span>{label}</span>
-        <strong>{formatDuration(value)}</strong>
-        <em>{ratio}%</em>
+    <div className={`donut-card ${compact ? "compact" : ""}`}>
+      <div className="donut-visual" style={{ background: gradient }} aria-hidden="true">
+        <div className="donut-hole">
+          <strong>{total > 0 ? formatDuration(total) : "0秒"}</strong>
+          <span>合计</span>
+        </div>
       </div>
-      <div className="progress-track">
-        <div className={`progress-bar ${tone}`} style={{ width: `${ratio}%` }} />
+      <div className="donut-meta">
+        <h3>{title}</h3>
+        <div className="donut-legend">
+          {segments.map((segment) => {
+            const ratio = percentage(segment.value, total);
+            return (
+              <div key={segment.key} className="donut-legend-row">
+                <span className="donut-swatch" style={{ backgroundColor: segment.color }} />
+                <span>{segment.label}</span>
+                <strong>{formatDuration(segment.value)}</strong>
+                <em>{ratio}%</em>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
+}
+
+function getTimeDistributionSegments(stats: MonitorController["stats"]): DonutSegment[] {
+  return [
+    { key: "busy", label: "忙碌", value: stats.busySeconds, color: donutColors.busy },
+    { key: "rest", label: "休息", value: stats.restSeconds, color: donutColors.rest },
+    { key: "idle", label: "空闲", value: stats.idleSeconds, color: donutColors.idle },
+  ];
 }
 
 function TaskStatsList({
@@ -1596,11 +1665,29 @@ function TimelineRow({
 }) {
   const [draft, setDraft] = useState(segment);
   const [splitAt, setSplitAt] = useState(() => midpointIso(segment));
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSplitOpen, setIsSplitOpen] = useState(false);
   const canMerge = previous ? canMergeSegments(previous, segment) : false;
+  const displaySegment = normalizeTimelineDraft(draft) ?? segment;
+  const segmentSeconds = durationFor(displaySegment);
+  const startedLabel = formatTimelineBoundary(displaySegment.startedAt, selectedDate);
+  const endedLabel = displaySegment.endedAt ? formatTimelineBoundary(displaySegment.endedAt, selectedDate) : "进行中";
+  const taskLabel =
+    normalizeTaskName(displaySegment.taskName) ?? (displaySegment.state === "busy" ? UNMARKED_TASK : "休息");
+  const notePreview = displaySegment.note?.trim() ?? "";
   const handleMerge = () => {
     if (!previous || !canMerge) return;
     if (!window.confirm(buildMergeConfirmationMessage(previous, segment))) return;
     void onMerge(segment);
+  };
+  const handleSplit = async () => {
+    if (!isSplitOpen) {
+      setIsSplitOpen(true);
+      return;
+    }
+
+    await onSplit(segment, splitAt);
+    setIsSplitOpen(false);
   };
 
   useEffect(() => {
@@ -1622,76 +1709,103 @@ function TimelineRow({
   }, [draft, isActive, onUpdate, segment]);
 
   return (
-    <article className={`timeline-row ${segment.state} ${isActive ? "active" : ""}`}>
-      <div className="timeline-marker" />
-      <div className="timeline-fields">
-        <select
-          value={draft.state}
-          onChange={(event) => setDraft((current) => ({ ...current, state: event.target.value as TrackableState }))}
-        >
-          <option value="busy">忙碌</option>
-          <option value="rest">休息</option>
-        </select>
-        <input
-          value={draft.taskName ?? ""}
-          placeholder={segment.state === "busy" ? UNMARKED_TASK : "休息内容"}
-          onChange={(event) => setDraft((current) => ({ ...current, taskName: event.target.value }))}
-        />
-        <textarea
-          className="timeline-note"
-          value={draft.note ?? ""}
-          placeholder="备注"
-          rows={2}
-          onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))}
-        />
-        <TimelineDateTimeInput
-          isoDate={draft.startedAt}
-          selectedDate={selectedDate}
-          containerClassName="timeline-start-input"
-          title="开始时间"
-          onChange={(startedAt) => {
-            if (!startedAt) return;
-            setDraft((current) => ({ ...current, startedAt }));
-          }}
-        />
-        <TimelineDateTimeInput
-          isoDate={draft.endedAt}
-          selectedDate={selectedDate}
-          containerClassName="timeline-end-input"
-          disabled={isActive}
-          title="结束时间"
-          onChange={(endedAt) => setDraft((current) => ({ ...current, endedAt }))}
-        />
-      </div>
-      <div className="timeline-meta">
-        <span>{trackableStateLabels[segment.state]}</span>
-        <strong>{formatDuration(durationFor(segment))}</strong>
-        {segmentOvertimeSeconds(segment) > 0 && (
-          <span className="time-delta overtime">超时 {formatDuration(segmentOvertimeSeconds(segment))}</span>
+    <article className={`timeline-row ${displaySegment.state} ${isActive ? "active" : ""} ${isEditing ? "editing" : ""}`}>
+      <aside className="timeline-range">
+        <span className="timeline-range-time">
+          {startedLabel} - {endedLabel}
+        </span>
+        <span className={`timeline-range-detail ${displaySegment.state}`}>
+          <strong>{formatDuration(segmentSeconds)}</strong>
+          <span aria-hidden="true">·</span>
+          <span>{trackableStateLabels[displaySegment.state]}</span>
+        </span>
+      </aside>
+      <section className="timeline-content">
+        <div className="timeline-read-row">
+          <strong className="timeline-task-title">{taskLabel}</strong>
+          <div className="timeline-meta">
+            {segmentOvertimeSeconds(displaySegment) > 0 && (
+              <span className="time-delta overtime">超时 {formatDuration(segmentOvertimeSeconds(displaySegment))}</span>
+            )}
+            {segmentUndertimeSeconds(displaySegment) > 0 && (
+              <span className="time-delta undertime">不足 {formatDuration(segmentUndertimeSeconds(displaySegment))}</span>
+            )}
+            {isActive && <span className="live-tag">进行中</span>}
+          </div>
+        </div>
+        {!isEditing && notePreview && <p className="timeline-note-preview">{notePreview}</p>}
+        {isEditing && (
+          <div className="timeline-fields">
+            <select
+              className="timeline-state-select"
+              value={draft.state}
+              onChange={(event) => setDraft((current) => ({ ...current, state: event.target.value as TrackableState }))}
+            >
+              <option value="busy">忙碌</option>
+              <option value="rest">休息</option>
+            </select>
+            <input
+              className="timeline-task-input"
+              value={draft.taskName ?? ""}
+              placeholder={draft.state === "busy" ? UNMARKED_TASK : "休息内容"}
+              onChange={(event) => setDraft((current) => ({ ...current, taskName: event.target.value }))}
+            />
+            <TimelineDateTimeInput
+              isoDate={draft.startedAt}
+              selectedDate={selectedDate}
+              containerClassName="timeline-start-input"
+              title="开始时间"
+              onChange={(startedAt) => {
+                if (!startedAt) return;
+                setDraft((current) => ({ ...current, startedAt }));
+              }}
+            />
+            <TimelineDateTimeInput
+              isoDate={draft.endedAt}
+              selectedDate={selectedDate}
+              containerClassName="timeline-end-input"
+              disabled={isActive}
+              title="结束时间"
+              onChange={(endedAt) => setDraft((current) => ({ ...current, endedAt }))}
+            />
+            <textarea
+              className="timeline-note"
+              value={draft.note ?? ""}
+              placeholder="备注"
+              rows={2}
+              onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))}
+            />
+          </div>
         )}
-        {segmentUndertimeSeconds(segment) > 0 && (
-          <span className="time-delta undertime">不足 {formatDuration(segmentUndertimeSeconds(segment))}</span>
-        )}
-        {isActive && <span className="live-tag">进行中</span>}
-      </div>
+      </section>
       <div className="row-actions">
-        <TimelineDateTimeInput
-          isoDate={splitAt}
-          selectedDate={selectedDate}
-          containerClassName="split-input"
-          title="拆分时间点"
-          onChange={(nextSplitAt) => {
-            if (nextSplitAt) setSplitAt(nextSplitAt);
-          }}
-        />
         <button
           type="button"
-          className="icon-only"
-          onClick={() => void onSplit(segment, splitAt)}
-          title="按时间点拆分"
+          className={`icon-button timeline-edit-button ${isEditing ? "primary" : ""}`}
+          onClick={() => setIsEditing((current) => !current)}
+        >
+          {isEditing ? <Check aria-hidden="true" /> : <Pencil aria-hidden="true" />}
+          {isEditing ? "完成" : "编辑"}
+        </button>
+        <button
+          type="button"
+          className={`icon-only ${isSplitOpen ? "active" : ""}`}
+          onClick={() => void handleSplit()}
+          title={isSplitOpen ? "确认拆分" : "拆分时间点"}
         >
           <Scissors aria-hidden="true" />
         </button>
+        {isSplitOpen && (
+          <TimelineDateTimeInput
+            isoDate={splitAt}
+            selectedDate={selectedDate}
+            containerClassName="split-input"
+            title="拆分时间点"
+            onChange={(nextSplitAt) => {
+              if (nextSplitAt) setSplitAt(nextSplitAt);
+            }}
+          />
+        )}
         <button
           type="button"
           className="icon-only"
@@ -1755,6 +1869,10 @@ function formatSegmentRangeLabel(segment: TimelineSegment): string {
   return `${formatDateTimeLabel(segment.startedAt)} - ${
     segment.endedAt ? formatDateTimeLabel(segment.endedAt) : "进行中"
   }`;
+}
+
+function formatTimelineBoundary(isoDate: string, selectedDate: string): string {
+  return isIsoOnLocalDate(isoDate, selectedDate) ? timeInputValueFromIso(isoDate) : formatDateTimeLabel(isoDate);
 }
 
 function advanceBackfillDraft(current: BackfillDraft, maxSelectableMinute: number): BackfillDraft {
@@ -1967,8 +2085,8 @@ function isIsoOnLocalDate(isoDate: string, selectedDate: string): boolean {
 }
 
 function normalizeTimelineDraft(segment: TimelineSegment): TimelineSegment | null {
-  const startedAt = maybeFromLocalInputValue(toLocalInputValue(segment.startedAt));
-  const endedAt = segment.endedAt ? maybeFromLocalInputValue(toLocalInputValue(segment.endedAt)) : null;
+  const startedAt = maybeFromLocalInputValue(segment.startedAt);
+  const endedAt = segment.endedAt ? maybeFromLocalInputValue(segment.endedAt) : null;
   if (!startedAt || (segment.endedAt && !endedAt)) return null;
 
   return {
