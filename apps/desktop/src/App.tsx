@@ -89,7 +89,7 @@ import {
   toLocalInputValue,
   toRulerPercent,
 } from "./lib/time";
-import { DonutChart, Metric, TaskStatsList } from "./components/metrics";
+import { DayRuler, DonutChart, Metric, StateFeedback, TargetRing, TaskStatsList } from "./components/metrics";
 import { getTimeDistributionSegments } from "./components/metrics-data";
 import { isTauriRuntime } from "./services/repository";
 import { useLifeMonitor } from "./services/useLifeMonitor";
@@ -435,6 +435,8 @@ function TodayPage({ monitor }: { monitor: MonitorController }) {
   const overtimeSeconds = monitor.stats.overtimeBusySeconds + monitor.stats.overtimeRestSeconds;
   const undertimeSeconds = monitor.stats.undertimeBusySeconds + monitor.stats.undertimeRestSeconds;
 
+  const hasOvertime = overtimeSeconds > 0;
+
   return (
     <section className="dashboard today-layout">
       <FocusPanel monitor={monitor} />
@@ -442,16 +444,25 @@ function TodayPage({ monitor }: { monitor: MonitorController }) {
         <div className="panel-head">
           <div>
             <p className="eyebrow">今日概览</p>
-            <h2>关键数据</h2>
+            <h2>现在该注意什么</h2>
           </div>
         </div>
         <div className="summary-metric-grid">
           <Metric label="番茄钟" value={`${monitor.stats.pomodoroCount} 个`} />
-          <Metric label="超时" value={formatDuration(overtimeSeconds)} />
+          <Metric label="超时" value={formatDuration(overtimeSeconds)} tone={hasOvertime ? "warning" : undefined} />
           <Metric label="时间不足" value={formatDuration(undertimeSeconds)} />
           <Metric label="待补记忙碌" value={formatDuration(monitor.stats.unmarkedSeconds)} />
         </div>
-        <DonutChart title="时间分布" segments={distribution} compact />
+        <DayRuler segments={distribution} />
+        {hasOvertime ? (
+          <StateFeedback tone="warning" title="今天有超出目标的记录">
+            累计超时 {formatDuration(overtimeSeconds)}，可以在时间线里拆分或补充备注。
+          </StateFeedback>
+        ) : (
+          <StateFeedback tone="success" title="节奏保持得不错">
+            目前没有明显超时，继续保持当前的忙碌与休息节奏。
+          </StateFeedback>
+        )}
         <TaskStatsList tasks={monitor.stats.taskStats.slice(0, 3)} emptyText="今天还没有忙碌记录" />
       </section>
     </section>
@@ -462,12 +473,16 @@ function FocusPanel({ monitor }: { monitor: MonitorController }) {
   const canExtend = monitor.state === "busy" || monitor.state === "rest";
   const canEnd = monitor.state === "busy" || monitor.state === "rest" || monitor.state === "paused";
   const timerStatusText = getFocusTimerStatus(monitor);
+  const isRunning = monitor.state === "busy" || monitor.state === "rest";
+  const targetSeconds = Math.max(1, monitor.snapshot.targetMinutes * 60);
+  const progressRatio = isRunning ? monitor.snapshot.elapsedSeconds / targetSeconds : 0;
+  const consoleTone = monitor.snapshot.isDue ? "is-due" : monitor.state;
 
   return (
     <section className="focus-panel">
       <div className="panel-head">
         <div>
-          <p className="eyebrow">当前状态</p>
+          <p className="eyebrow">当前记录</p>
           <h2>{stateLabels[monitor.state]}</h2>
         </div>
         <div className={`due-text ${monitor.snapshot.isDue ? "is-soft-overdue" : ""}`}>
@@ -475,10 +490,15 @@ function FocusPanel({ monitor }: { monitor: MonitorController }) {
         </div>
       </div>
 
-      <div className="timer-grid">
-        <Metric label="已持续" value={formatDuration(monitor.snapshot.elapsedSeconds)} />
-        <Metric label="目标" value={`${monitor.snapshot.targetMinutes} 分钟`} />
-        <Metric label="当前任务" value={monitor.snapshot.taskName ?? UNMARKED_TASK} />
+      <div className={`focus-console ${consoleTone}`}>
+        <div className="focus-console-copy">
+          <p className="muted">
+            目标 {monitor.snapshot.targetMinutes} 分钟 · {monitor.snapshot.taskName ?? UNMARKED_TASK}
+          </p>
+          <div className="focus-timer">{getFocusTimerDisplay(monitor)}</div>
+          <p className="muted">已持续 {formatDuration(monitor.snapshot.elapsedSeconds)}</p>
+        </div>
+        <TargetRing ratio={progressRatio} />
       </div>
 
       <div className="task-form">
@@ -498,7 +518,12 @@ function FocusPanel({ monitor }: { monitor: MonitorController }) {
       {monitor.settings.quickTasks.length > 0 && (
         <div className="quick-tasks">
           {monitor.settings.quickTasks.map((task) => (
-            <button key={task} type="button" onClick={() => monitor.setTaskDraft(task)}>
+            <button
+              key={task}
+              type="button"
+              className={monitor.taskDraft.trim() === task.trim() ? "active" : ""}
+              onClick={() => monitor.setTaskDraft(task)}
+            >
               {task}
             </button>
           ))}
@@ -1366,7 +1391,11 @@ function SettingsPage({
             onChange={onImportFile}
           />
         </div>
-        {dataTransferMessage && <p className="inline-message">{dataTransferMessage}</p>}
+        {dataTransferMessage && (
+          <StateFeedback tone="success" title="记录迁移结果" live="polite">
+            {dataTransferMessage}
+          </StateFeedback>
+        )}
       </div>
     </section>
   );
@@ -1894,6 +1923,13 @@ function getFocusTimerStatus(monitor: MonitorController): string {
   if (monitor.state === "idle" || monitor.state === "paused") return "未计时";
   if (monitor.snapshot.isDue) return `多用 ${formatDuration(monitor.snapshot.overtimeSeconds)}`;
   return `剩余 ${formatDuration(monitor.snapshot.remainingSeconds)}`;
+}
+
+function getFocusTimerDisplay(monitor: MonitorController): string {
+  if (monitor.state === "idle") return "--:--";
+  if (monitor.state === "paused") return "暂停";
+  const seconds = monitor.snapshot.isDue ? monitor.snapshot.overtimeSeconds : monitor.snapshot.remainingSeconds;
+  return `${monitor.snapshot.isDue ? "+" : ""}${formatMiniDuration(seconds)}`;
 }
 
 function getStatusLabel(monitor: MonitorController): string {

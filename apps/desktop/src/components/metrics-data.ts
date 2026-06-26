@@ -2,9 +2,9 @@ import type { TodayStats } from "@lifemonitor/core";
 import type { DonutSegment } from "./metrics";
 
 const donutColors = {
-  busy: "#d9982b",
-  rest: "#0f837d",
-  idle: "#94a3b8",
+  busy: "var(--busy)",
+  rest: "var(--rest)",
+  idle: "color-mix(in oklch, var(--muted), white 62%)",
 } as const;
 
 export function getTimeDistributionSegments(stats: TodayStats): DonutSegment[] {

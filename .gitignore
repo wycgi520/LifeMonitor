@@ -42,3 +42,7 @@ lifemonitor-preview.png
 *.njsproj
 *.sln
 *.sw?
+
+test
+.codex
+.cursor
