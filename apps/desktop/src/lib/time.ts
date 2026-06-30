@@ -3,6 +3,12 @@ import type { TimelineSegment } from "@lifemonitor/core";
 export const RULER_STEP_MINUTES = 1;
 export const DAY_MINUTES = 24 * 60;
 
+export interface TimelineInterval {
+  id?: string;
+  startedAt: string;
+  endedAt: string | null;
+}
+
 export function formatDateTimeLabel(isoDate: string): string {
   return new Intl.DateTimeFormat("zh-CN", {
     month: "short",
@@ -10,6 +16,31 @@ export function formatDateTimeLabel(isoDate: string): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(isoDate));
+}
+
+export function timelineIntervalsOverlap(
+  left: TimelineInterval,
+  right: TimelineInterval,
+  nowIso = new Date().toISOString(),
+): boolean {
+  const leftStart = new Date(left.startedAt).getTime();
+  const leftEnd = new Date(left.endedAt ?? nowIso).getTime();
+  const rightStart = new Date(right.startedAt).getTime();
+  const rightEnd = new Date(right.endedAt ?? nowIso).getTime();
+
+  if (![leftStart, leftEnd, rightStart, rightEnd].every(Number.isFinite)) return false;
+  return leftStart < rightEnd && leftEnd > rightStart;
+}
+
+export function findOverlappingTimelineSegment<TSegment extends TimelineInterval>(
+  segments: TSegment[],
+  candidate: TimelineInterval,
+  ignoredSegmentId?: string,
+): TSegment | null {
+  return segments.find((segment) => {
+    if (ignoredSegmentId && segment.id === ignoredSegmentId) return false;
+    return timelineIntervalsOverlap(segment, candidate);
+  }) ?? null;
 }
 
 export function durationFor(segment: TimelineSegment): number {
@@ -36,10 +67,10 @@ export function midpointIso(segment: TimelineSegment): string {
   return midpoint.toISOString();
 }
 
-export function toLocalInputValue(isoDate: string): string {
+export function toLocalInputValue(isoDate: string, includeSeconds = false): string {
   const date = new Date(isoDate);
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
+  return local.toISOString().slice(0, includeSeconds ? 19 : 16);
 }
 
 export function maybeFromLocalInputValue(value: string): string | null {
@@ -48,12 +79,54 @@ export function maybeFromLocalInputValue(value: string): string | null {
 }
 
 export function isoFromLocalTimeInput(selectedDate: string, value: string): string | null {
-  const minute = minuteFromTimeInput(value);
-  return minute === null ? null : isoFromLocalMinute(selectedDate, minute);
+  const parsed = parseLocalTimeInput(value);
+  if (!parsed) return null;
+
+  const date = localDateFromKey(selectedDate);
+  date.setHours(parsed.hours, parsed.minutes, parsed.seconds, 0);
+  return date.toISOString();
 }
 
-export function timeInputValueFromIso(isoDate: string): string {
-  return timeInputValueFromMinute(getLocalMinuteOfDay(new Date(isoDate)));
+export function timeInputValueFromIso(isoDate: string, includeSeconds = false): string {
+  const date = new Date(isoDate);
+  const value = timeInputValueFromMinute(getLocalMinuteOfDay(date));
+  if (!includeSeconds) return value;
+
+  return `${value}:${date.getSeconds().toString().padStart(2, "0")}`;
+}
+
+export function formatTimelineBoundary(isoDate: string, selectedDate: string, includeSeconds = false): string {
+  const date = new Date(isoDate);
+  if (isIsoOnLocalDate(isoDate, selectedDate)) return formatLocalTime(date, includeSeconds);
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: includeSeconds ? "2-digit" : undefined,
+  }).format(date);
+}
+
+export function formatTimelineRangeLabel(startedAt: string, endedAt: string | null, selectedDate: string): string {
+  if (!endedAt) return `${formatTimelineBoundary(startedAt, selectedDate)} - 进行中`;
+
+  const start = new Date(startedAt);
+  const end = new Date(endedAt);
+  const durationMs = end.getTime() - start.getTime();
+  const sameDisplayedMinute =
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth() &&
+    start.getDate() === end.getDate() &&
+    start.getHours() === end.getHours() &&
+    start.getMinutes() === end.getMinutes();
+  const includeSeconds = durationMs < 60_000 || sameDisplayedMinute;
+
+  return `${formatTimelineBoundary(startedAt, selectedDate, includeSeconds)} - ${formatTimelineBoundary(
+    endedAt,
+    selectedDate,
+    includeSeconds,
+  )}`;
 }
 
 export function isIsoOnLocalDate(isoDate: string, selectedDate: string): boolean {
@@ -92,12 +165,22 @@ export function isPersistableTimelineDraft(segment: TimelineSegment, isActive: b
 }
 
 export function minuteFromTimeInput(value: string): number | null {
-  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  const parsed = parseLocalTimeInput(value);
+  if (!parsed) return null;
+  const { hours, minutes } = parsed;
+  return snapMinute(hours * 60 + minutes);
+}
+
+function parseLocalTimeInput(value: string): { hours: number; minutes: number; seconds: number } | null {
+  const match = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value);
   if (!match) return null;
+
   const hours = Number(match[1]);
   const minutes = Number(match[2]);
-  if (hours > 23 || minutes > 59) return null;
-  return snapMinute(hours * 60 + minutes);
+  const seconds = match[3] ? Number(match[3]) : 0;
+  if (hours > 23 || minutes > 59 || seconds > 59) return null;
+
+  return { hours, minutes, seconds };
 }
 
 export function isoFromLocalMinute(selectedDate: string, minute: number): string {
@@ -111,6 +194,15 @@ export function timeInputValueFromMinute(minute: number): string {
   const hours = Math.floor(safeMinute / 60);
   const minutes = safeMinute % 60;
   return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
+}
+
+function formatLocalTime(date: Date, includeSeconds: boolean): string {
+  const hours = date.getHours().toString().padStart(2, "0");
+  const minutes = date.getMinutes().toString().padStart(2, "0");
+  if (!includeSeconds) return `${hours}:${minutes}`;
+
+  const seconds = date.getSeconds().toString().padStart(2, "0");
+  return `${hours}:${minutes}:${seconds}`;
 }
 
 export function formatMinuteLabel(minute: number): string {

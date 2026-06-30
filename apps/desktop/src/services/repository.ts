@@ -9,6 +9,7 @@ import {
   type TimelineSegment,
   type TrackableState,
 } from "@lifemonitor/core";
+import { timelineIntervalsOverlap } from "../lib/time";
 
 export interface LifeRepository {
   loadSettings(): Promise<LifeSettings>;
@@ -103,10 +104,7 @@ class LocalStorageRepository implements LifeRepository {
 
   async listSegments(startIso: string, endIso: string): Promise<TimelineSegment[]> {
     return this.read()
-      .segments.filter((segment) => {
-        const segmentEnd = segment.endedAt ?? new Date().toISOString();
-        return segment.startedAt < endIso && segmentEnd > startIso;
-      })
+      .segments.filter((segment) => timelineIntervalsOverlap(segment, { startedAt: startIso, endedAt: endIso }))
       .sort((left, right) => left.startedAt.localeCompare(right.startedAt));
   }
 

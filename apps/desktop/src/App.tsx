@@ -40,6 +40,7 @@ import {
   useState,
   type ChangeEvent,
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
@@ -70,6 +71,7 @@ import {
   formatMiniDuration,
   formatMinuteLabel,
   formatRulerZoomLabel,
+  formatTimelineRangeLabel,
   getLocalMinuteOfDay,
   hasTimelineDraftChanges,
   isIsoOnLocalDate,
@@ -93,7 +95,7 @@ import {
 import { DayRuler, DonutChart, Metric, StateFeedback, TargetRing, TaskStatsList } from "./components/metrics";
 import { getTimeDistributionSegments } from "./components/metrics-data";
 import { isTauriRuntime } from "./services/repository";
-import { useLifeMonitor } from "./services/useLifeMonitor";
+import { useLifeMonitor, type LifeActionResult } from "./services/useLifeMonitor";
 import {
   registerMiniWindowPositionTracking,
   startWindowDrag,
@@ -111,6 +113,7 @@ const RULER_ZOOM_LEVELS = [1, 1.5, 2.5, 4] as const;
 type PageId = "today" | "timeline" | "stats" | "settings";
 type MonitorController = ReturnType<typeof useLifeMonitor>;
 type BackfillDragMode = "start" | "end" | "range";
+type TimelineEditFocusTarget = "start" | "task";
 
 const stateLabels = {
   idle: "空闲",
@@ -932,15 +935,15 @@ function BackfillPanel({ monitor }: { monitor: MonitorController }) {
       return;
     }
 
-    const added = await monitor.addManualSegment({
+    const result = await monitor.addManualSegment({
       state: draft.state,
       taskName: draft.taskName,
       note: draft.note,
       startedAt: isoFromLocalMinute(monitor.selectedDate, range.startMinute),
       endedAt: isoFromLocalMinute(monitor.selectedDate, range.endMinute),
     });
-    if (!added) {
-      setMessage("补记失败：时间和已有记录重叠或格式有误。");
+    if (!result.ok) {
+      setMessage(result.message);
       return;
     }
 
@@ -1583,6 +1586,7 @@ function TimelineDateTimeInput({
   disabled = false,
   title,
   containerClassName = "",
+  inputRef,
   onChange,
 }: {
   isoDate: string | null;
@@ -1590,16 +1594,18 @@ function TimelineDateTimeInput({
   disabled?: boolean;
   title: string;
   containerClassName?: string;
+  inputRef?: RefObject<HTMLInputElement | null>;
   onChange: (isoDate: string | null) => void;
 }) {
   const usesSelectedDate = !isoDate || isIsoOnLocalDate(isoDate, selectedDate);
-  const value = isoDate ? (usesSelectedDate ? timeInputValueFromIso(isoDate) : toLocalInputValue(isoDate)) : "";
+  const value = isoDate ? (usesSelectedDate ? timeInputValueFromIso(isoDate, true) : toLocalInputValue(isoDate, true)) : "";
 
   return (
     <div className={`timeline-time-field ${usesSelectedDate ? "" : "is-cross-day"} ${containerClassName}`}>
       <input
+        ref={inputRef}
         type={usesSelectedDate ? "time" : "datetime-local"}
-        step={usesSelectedDate ? RULER_STEP_MINUTES * 60 : undefined}
+        step={1}
         disabled={disabled}
         value={value}
         title={title}
@@ -1634,7 +1640,7 @@ function TimelineRow({
   selectedDate: string;
   previous: TimelineSegment | null;
   isActive: boolean;
-  onUpdate: (segment: TimelineSegment) => Promise<void>;
+  onUpdate: (segment: TimelineSegment) => Promise<LifeActionResult>;
   onSplit: (segment: TimelineSegment, splitAtIso: string) => Promise<void>;
   onMerge: (segment: TimelineSegment) => Promise<void>;
   onDelete: (segment: TimelineSegment) => Promise<void>;
@@ -1643,11 +1649,14 @@ function TimelineRow({
   const [splitAt, setSplitAt] = useState(() => midpointIso(segment));
   const [isEditing, setIsEditing] = useState(false);
   const [isSplitOpen, setIsSplitOpen] = useState(false);
+  const [editMessage, setEditMessage] = useState<string | null>(null);
+  const taskInputRef = useRef<HTMLInputElement | null>(null);
+  const startInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingEditFocusRef = useRef<TimelineEditFocusTarget | null>(null);
   const canMerge = previous ? canMergeSegments(previous, segment) : false;
   const displaySegment = normalizeTimelineDraft(draft) ?? segment;
   const segmentSeconds = durationFor(displaySegment);
-  const startedLabel = formatTimelineBoundary(displaySegment.startedAt, selectedDate);
-  const endedLabel = displaySegment.endedAt ? formatTimelineBoundary(displaySegment.endedAt, selectedDate) : "进行中";
+  const rangeLabel = formatTimelineRangeLabel(displaySegment.startedAt, displaySegment.endedAt, selectedDate);
   const taskLabel =
     normalizeTaskName(displaySegment.taskName) ?? (displaySegment.state === "busy" ? UNMARKED_TASK : "休息");
   const notePreview = displaySegment.note?.trim() ?? "";
@@ -1665,11 +1674,50 @@ function TimelineRow({
     await onSplit(segment, splitAt);
     setIsSplitOpen(false);
   };
+  const startInlineEdit = (target: TimelineEditFocusTarget) => {
+    pendingEditFocusRef.current = target;
+    setEditMessage(null);
+    setIsEditing(true);
+  };
+  const handleRowDoubleClick = (event: MouseEvent<HTMLElement>) => {
+    if (isEditing) return;
+
+    const target = event.target as HTMLElement;
+    if (target.closest("button, input, textarea, select, a, .row-actions, .timeline-fields, .timeline-edit-target")) {
+      return;
+    }
+
+    startInlineEdit("task");
+  };
+  const handleInlineEditKeyDown = (
+    event: ReactKeyboardEvent<HTMLElement>,
+    target: TimelineEditFocusTarget,
+  ) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    startInlineEdit(target);
+  };
 
   useEffect(() => {
     setDraft(segment);
     setSplitAt(midpointIso(segment));
+    setEditMessage(null);
   }, [segment]);
+
+  useEffect(() => {
+    if (!isEditing) return;
+    const focusTarget = pendingEditFocusRef.current;
+    if (!focusTarget) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      const input = focusTarget === "start" ? startInputRef.current : taskInputRef.current;
+      input?.focus();
+      input?.select();
+      pendingEditFocusRef.current = null;
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isEditing]);
 
   useEffect(() => {
     const normalizedDraft = normalizeTimelineDraft(draft);
@@ -1678,18 +1726,31 @@ function TimelineRow({
     if (!isPersistableTimelineDraft(normalizedDraft, isActive)) return;
 
     const timeout = window.setTimeout(() => {
-      void onUpdate(normalizedDraft);
+      void onUpdate(normalizedDraft).then((result) => {
+        setEditMessage(result.ok ? null : result.message);
+      });
     }, 350);
 
     return () => window.clearTimeout(timeout);
   }, [draft, isActive, onUpdate, segment]);
 
   return (
-    <article className={`timeline-row ${displaySegment.state} ${isActive ? "active" : ""} ${isEditing ? "editing" : ""}`}>
+    <article
+      className={`timeline-row ${displaySegment.state} ${isActive ? "active" : ""} ${isEditing ? "editing" : ""}`}
+      onDoubleClick={handleRowDoubleClick}
+      title={isEditing ? undefined : "双击编辑这条记录"}
+    >
       <aside className="timeline-range">
-        <span className="timeline-range-time">
-          {startedLabel} - {endedLabel}
-        </span>
+        <button
+          type="button"
+          className="timeline-edit-target timeline-range-time"
+          title="双击修改时间"
+          aria-label={`双击修改时间：${rangeLabel}`}
+          onDoubleClick={() => startInlineEdit("start")}
+          onKeyDown={(event) => handleInlineEditKeyDown(event, "start")}
+        >
+          {rangeLabel}
+        </button>
         <span className={`timeline-range-detail ${displaySegment.state}`}>
           <strong>{formatDuration(segmentSeconds)}</strong>
           <span aria-hidden="true">·</span>
@@ -1698,7 +1759,16 @@ function TimelineRow({
       </aside>
       <section className="timeline-content">
         <div className="timeline-read-row">
-          <strong className="timeline-task-title">{taskLabel}</strong>
+          <button
+            type="button"
+            className="timeline-edit-target timeline-task-title"
+            title="双击修改活动内容"
+            aria-label={`双击修改活动内容：${taskLabel}`}
+            onDoubleClick={() => startInlineEdit("task")}
+            onKeyDown={(event) => handleInlineEditKeyDown(event, "task")}
+          >
+            {taskLabel}
+          </button>
           <div className="timeline-meta">
             {segmentOvertimeSeconds(displaySegment) > 0 && (
               <span className="time-delta overtime">超时 {formatDuration(segmentOvertimeSeconds(displaySegment))}</span>
@@ -1721,6 +1791,7 @@ function TimelineRow({
               <option value="rest">休息</option>
             </select>
             <input
+              ref={taskInputRef}
               className="timeline-task-input"
               value={draft.taskName ?? ""}
               placeholder={draft.state === "busy" ? UNMARKED_TASK : "休息内容"}
@@ -1731,6 +1802,7 @@ function TimelineRow({
               selectedDate={selectedDate}
               containerClassName="timeline-start-input"
               title="开始时间"
+              inputRef={startInputRef}
               onChange={(startedAt) => {
                 if (!startedAt) return;
                 setDraft((current) => ({ ...current, startedAt }));
@@ -1753,6 +1825,7 @@ function TimelineRow({
             />
           </div>
         )}
+        {isEditing && editMessage && <p className="timeline-row-message">{editMessage}</p>}
       </section>
       <div className="row-actions">
         <button
@@ -1845,10 +1918,6 @@ function formatSegmentRangeLabel(segment: TimelineSegment): string {
   return `${formatDateTimeLabel(segment.startedAt)} - ${
     segment.endedAt ? formatDateTimeLabel(segment.endedAt) : "进行中"
   }`;
-}
-
-function formatTimelineBoundary(isoDate: string, selectedDate: string): string {
-  return isIsoOnLocalDate(isoDate, selectedDate) ? timeInputValueFromIso(isoDate) : formatDateTimeLabel(isoDate);
 }
 
 function advanceBackfillDraft(current: BackfillDraft, maxSelectableMinute: number): BackfillDraft {

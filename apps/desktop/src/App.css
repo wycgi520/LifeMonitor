@@ -1712,6 +1712,10 @@ textarea {
 }
 
 .timeline-range-time {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
   color: var(--fg);
   font-family: var(--font-mono);
   font-size: 14px;
@@ -1767,8 +1771,36 @@ textarea {
   min-width: 0;
 }
 
+.timeline-edit-target {
+  appearance: none;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 6px;
+  margin: -2px -4px;
+  padding: 2px 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  outline: 1px dashed transparent;
+  outline-offset: 2px;
+  transition:
+    background 140ms ease,
+    outline-color 140ms ease,
+    color 140ms ease;
+}
+
+.timeline-edit-target:hover,
+.timeline-edit-target:focus-visible {
+  outline-color: color-mix(in oklch, var(--accent), white 26%);
+  background: color-mix(in oklch, var(--accent), white 91%);
+}
+
 .timeline-task-title {
+  display: inline-flex;
+  align-items: center;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   color: var(--fg);
   font-size: 15px;
@@ -1801,6 +1833,18 @@ textarea {
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.timeline-row-message {
+  margin: 0;
+  border: 1px solid color-mix(in oklch, var(--danger), white 48%);
+  border-radius: 8px;
+  padding: 7px 9px;
+  color: var(--danger-strong);
+  background: var(--danger-soft);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
 .timeline-start-input {

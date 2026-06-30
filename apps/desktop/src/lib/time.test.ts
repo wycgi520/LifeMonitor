@@ -4,13 +4,17 @@ import {
   clampMinutes,
   formatDateLabel,
   formatMiniDuration,
+  formatTimelineRangeLabel,
   isIsoOnLocalDate,
+  isoFromLocalTimeInput,
   maybeFromLocalInputValue,
   midpointIso,
   normalizeTimelineDraft,
   percentage,
   segmentOvertimeSeconds,
+  timeInputValueFromIso,
   timeInputValueFromMinute,
+  timelineIntervalsOverlap,
   toDateInputValue,
   toLocalInputValue,
 } from "./time";
@@ -30,6 +34,13 @@ describe("desktop time utilities", () => {
 
     expect(maybeFromLocalInputValue(localInput)).toBe(isoDate);
     expect(isIsoOnLocalDate(new Date(2026, 4, 21, 9, 30).toISOString(), "2026-05-21")).toBe(true);
+  });
+
+  it("round-trips editable timeline times with seconds", () => {
+    const localIso = new Date(2026, 4, 21, 9, 30, 17).toISOString();
+
+    expect(timeInputValueFromIso(localIso, true)).toBe("09:30:17");
+    expect(isoFromLocalTimeInput("2026-05-21", "09:30:17")).toBe(localIso);
   });
 
   it("calculates segment display times without mutating records", () => {
@@ -57,5 +68,42 @@ describe("desktop time utilities", () => {
     expect(clampMinutes(241, 1, 240)).toBe(240);
     expect(percentage(25, 100)).toBe(25);
     expect(percentage(25, 0)).toBe(0);
+  });
+
+  it("treats adjacent timeline intervals as non-overlapping half-open ranges", () => {
+    const left = {
+      startedAt: "2026-05-21T02:00:00.000Z",
+      endedAt: "2026-05-21T02:30:00.000Z",
+    };
+
+    expect(
+      timelineIntervalsOverlap(left, {
+        startedAt: "2026-05-21T02:30:00.000Z",
+        endedAt: "2026-05-21T03:00:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      timelineIntervalsOverlap(left, {
+        startedAt: "2026-05-21T02:29:59.000Z",
+        endedAt: "2026-05-21T03:00:00.000Z",
+      }),
+    ).toBe(true);
+  });
+
+  it("shows seconds for visually ambiguous timeline ranges", () => {
+    expect(
+      formatTimelineRangeLabel(
+        "2026-05-21T02:20:02.000Z",
+        "2026-05-21T02:20:09.000Z",
+        "2026-05-21",
+      ),
+    ).toBe("10:20:02 - 10:20:09");
+    expect(
+      formatTimelineRangeLabel(
+        "2026-05-21T02:20:00.000Z",
+        "2026-05-21T02:35:00.000Z",
+        "2026-05-21",
+      ),
+    ).toBe("10:20 - 10:35");
   });
 });

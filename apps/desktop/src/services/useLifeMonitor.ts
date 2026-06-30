@@ -1,5 +1,6 @@
 import {
   DEFAULT_SETTINGS,
+  UNMARKED_TASK,
   calculateTodayStats,
   canMergeSegments,
   closeSegment,
@@ -32,6 +33,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { showReminderNotification } from "./notifications";
 import { registerWindowCloseBehavior, syncPlatformSettings } from "./platform";
 import { createRepository, type LifeRepository } from "./repository";
+import { findOverlappingTimelineSegment, formatTimelineRangeLabel } from "../lib/time";
 
 interface PausedContext {
   state: TrackableState;
@@ -47,6 +49,8 @@ interface ManualSegmentInput {
   startedAt: string;
   endedAt: string;
 }
+
+export type LifeActionResult = { ok: true } | { ok: false; message: string };
 
 interface TimeoutNotice {
   state: TrackableState;
@@ -89,8 +93,8 @@ export interface LifeMonitorController {
   dismissTimeoutNotice: () => void;
   saveSettings: (settings: LifeSettings) => Promise<void>;
   saveSummary: (scope: SummaryScope, content: string) => Promise<void>;
-  addManualSegment: (input: ManualSegmentInput) => Promise<boolean>;
-  updateSegment: (segment: TimelineSegment) => Promise<void>;
+  addManualSegment: (input: ManualSegmentInput) => Promise<LifeActionResult>;
+  updateSegment: (segment: TimelineSegment) => Promise<LifeActionResult>;
   splitSegment: (segment: TimelineSegment, splitAtIso: string) => Promise<void>;
   mergeWithPrevious: (segment: TimelineSegment) => Promise<void>;
   deleteSegment: (segment: TimelineSegment) => Promise<void>;
@@ -313,14 +317,17 @@ export function useLifeMonitor(): LifeMonitorController {
   );
 
   const persistAndRefresh = useCallback(
-    async (operation: (repo: LifeRepository) => Promise<void>) => {
-      if (!repository) return;
+    async (operation: (repo: LifeRepository) => Promise<void>): Promise<LifeActionResult> => {
+      if (!repository) return { ok: false, message: "记录存储还没有准备好。" };
       try {
         await operation(repository);
         setSegments(await repository.listSegments(selectedDayRange.startIso, selectedDayRange.endIso));
         setError(null);
+        return { ok: true };
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : String(caught));
+        const message = caught instanceof Error ? caught.message : String(caught);
+        setError(message);
+        return { ok: false, message };
       }
     },
     [repository, selectedDayRange.endIso, selectedDayRange.startIso],
@@ -626,8 +633,8 @@ export function useLifeMonitor(): LifeMonitorController {
   );
 
   const addManualSegment = useCallback(
-    async (input: ManualSegmentInput): Promise<boolean> => {
-      if (!repository) return false;
+    async (input: ManualSegmentInput): Promise<LifeActionResult> => {
+      if (!repository) return { ok: false, message: "记录存储还没有准备好。" };
 
       try {
         const segment = createManualSegment({
@@ -635,20 +642,23 @@ export function useLifeMonitor(): LifeMonitorController {
           settings: settingsRef.current,
         });
         const overlappingSegments = await repository.listSegments(segment.startedAt, input.endedAt);
-        if (overlappingSegments.length > 0) {
-          throw new Error("补记时间和已有记录重叠，请先调整现有记录。");
+        const overlappingSegment = findOverlappingTimelineSegment(overlappingSegments, segment);
+        if (overlappingSegment) {
+          return {
+            ok: false,
+            message: `补记时间与 ${describeTimelineSegment(overlappingSegment, selectedDate)} 重叠。`,
+          };
         }
 
         await repository.insertSegment(segment);
         setSegments(await repository.listSegments(selectedDayRange.startIso, selectedDayRange.endIso));
         setError(null);
-        return true;
+        return { ok: true };
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : String(caught));
-        return false;
+        return { ok: false, message: caught instanceof Error ? caught.message : String(caught) };
       }
     },
-    [repository, selectedDayRange.endIso, selectedDayRange.startIso],
+    [repository, selectedDate, selectedDayRange.endIso, selectedDayRange.startIso],
   );
 
   const updateSegment = useCallback(
@@ -664,22 +674,26 @@ export function useLifeMonitor(): LifeMonitorController {
       const endMs = updated.endedAt === null ? null : new Date(updated.endedAt).getTime();
 
       if (!Number.isFinite(startMs) || (endMs !== null && (!Number.isFinite(endMs) || endMs <= startMs))) {
-        setError("结束时间需要晚于开始时间。");
-        return;
+        return { ok: false, message: "结束时间需要晚于开始时间。" };
       }
 
       if (updated.endedAt === null && activeSegment?.id !== updated.id) {
-        setError("只有进行中的记录可以没有结束时间。");
-        return;
+        return { ok: false, message: "只有进行中的记录可以没有结束时间。" };
       }
 
-      await persistAndRefresh(async (repo) => {
-        const overlapEnd = updated.endedAt ?? new Date().toISOString();
-        const overlappingSegments = await repo.listSegments(updated.startedAt, overlapEnd);
-        if (overlappingSegments.some((item) => item.id !== updated.id)) {
-          throw new Error("调整后的时间和已有记录重叠，请先调整相邻记录。");
-        }
+      const overlapEnd = updated.endedAt ?? new Date().toISOString();
+      if (!repository) return { ok: false, message: "记录存储还没有准备好。" };
 
+      const overlappingSegments = await repository.listSegments(updated.startedAt, overlapEnd);
+      const overlappingSegment = findOverlappingTimelineSegment(overlappingSegments, updated, updated.id);
+      if (overlappingSegment) {
+        return {
+          ok: false,
+          message: `未保存：与 ${describeTimelineSegment(overlappingSegment, selectedDate)} 重叠。`,
+        };
+      }
+
+      return persistAndRefresh(async (repo) => {
         await repo.updateSegment(updated);
         if (activeSegment?.id === updated.id) {
           setActiveSegment(updated);
@@ -688,7 +702,7 @@ export function useLifeMonitor(): LifeMonitorController {
         }
       });
     },
-    [activeSegment, persistAndRefresh, setTaskDraftFromSystem],
+    [activeSegment, persistAndRefresh, repository, selectedDate, setTaskDraftFromSystem],
   );
 
   const changeActiveNote = useCallback(
@@ -873,4 +887,9 @@ export function useLifeMonitor(): LifeMonitorController {
     importData,
     refresh,
   };
+}
+
+function describeTimelineSegment(segment: TimelineSegment, selectedDate: string): string {
+  const taskName = normalizeTaskName(segment.taskName) ?? (segment.state === "busy" ? UNMARKED_TASK : "休息");
+  return `${formatTimelineRangeLabel(segment.startedAt, segment.endedAt, selectedDate)}「${taskName}」`;
 }
