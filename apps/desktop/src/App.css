@@ -1314,6 +1314,7 @@ textarea {
   margin-top: 12px;
   overflow: auto;
   padding-right: 4px;
+  container: timeline / inline-size;
 }
 
 .timeline-section {
@@ -2317,7 +2318,6 @@ textarea {
   .analysis-layout,
   .backfill-form,
   .data-portability,
-  .timeline-row,
   .reminder {
     grid-template-columns: 1fr;
   }
@@ -2332,8 +2332,29 @@ textarea {
     overflow: visible;
   }
 
-  .timeline-fields {
+  .backfill-fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .backfill-task,
+  .backfill-note,
+  .backfill-fields > .icon-button.primary {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .data-actions,
+  .reminder-actions {
+    justify-content: flex-start;
+  }
+}
+
+/* The timeline rows live in their own container; collapse them to a vertical
+   layout only when the timeline itself is too narrow for a single row, not
+   when the viewport happens to shrink. */
+@container timeline (max-width: 600px) {
+  .timeline-row {
+    grid-template-columns: 1fr;
   }
 
   .timeline-range {
@@ -2347,24 +2368,27 @@ textarea {
     min-width: 0;
   }
 
-  .backfill-fields {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .backfill-task,
-  .backfill-note,
   .timeline-note,
   .timeline-start-input,
-  .timeline-end-input,
-  .backfill-fields > .icon-button.primary {
+  .timeline-end-input {
     grid-column: auto;
     grid-row: auto;
   }
 
-  .data-actions,
-  .row-actions,
-  .reminder-actions {
+  .row-actions {
     justify-content: flex-start;
+  }
+}
+
+@container timeline (max-width: 880px) {
+  .timeline-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container timeline (max-width: 520px) {
+  .timeline-fields {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -2418,7 +2442,6 @@ textarea {
   .stat-list,
   .stat-list.expanded,
   .stat-row,
-  .timeline-fields,
   .backfill-fields {
     grid-template-columns: 1fr;
   }
