@@ -226,7 +226,7 @@ h3 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
   height: 100%;
   min-height: 0;
   overflow: auto;
@@ -238,6 +238,17 @@ h3 {
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+  min-height: 0;
+}
+
+/* Let the activity card and summary card absorb leftover height so the
+   bottom of the page doesn't collapse into a big empty band. */
+.today-col-left .focus-record {
+  flex: 1 1 auto;
+}
+
+.today-col-right .today-summary {
+  flex: 1 1 auto;
 }
 
 .today-layout .focus-panel,
@@ -282,8 +293,29 @@ h3 {
   resize: none;
 }
 
+.today-summary {
+  display: flex;
+  flex-direction: column;
+}
+
+.today-summary .summary-columns {
+  flex: 1 1 auto;
+  align-items: stretch;
+  min-height: 0;
+}
+
+.today-summary .summary-col-data {
+  min-height: 0;
+}
+
+.today-summary .summary-col-tasks {
+  min-height: 0;
+}
+
 .today-summary .task-stats {
-  max-height: 132px;
+  flex: 1 1 auto;
+  min-height: 96px;
+  max-height: none;
   overflow: auto;
 }
 
@@ -302,6 +334,7 @@ h3 {
 .focus-record {
   display: flex;
   flex-direction: column;
+  gap: 10px;
 }
 
 .focus-activity {
@@ -309,6 +342,8 @@ h3 {
   flex-direction: column;
   gap: 10px;
   min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 .focus-activity .task-form {
@@ -318,12 +353,15 @@ h3 {
 }
 
 .focus-activity .note-editor {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-height: 0;
   margin: 0;
 }
 
 .focus-activity .note-editor textarea {
   min-height: 46px;
+  height: 100%;
+  resize: none;
 }
 
 .due-text {

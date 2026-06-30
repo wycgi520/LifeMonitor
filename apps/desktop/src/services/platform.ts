@@ -14,10 +14,10 @@ type TauriWindow = {
 };
 
 const FULL_WINDOW = {
-  width: 1180,
-  height: 760,
-  minWidth: 960,
-  minHeight: 640,
+  width: 1120,
+  height: 700,
+  minWidth: 900,
+  minHeight: 600,
 };
 
 const MINI_WINDOW = {

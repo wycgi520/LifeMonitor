@@ -428,10 +428,10 @@ function TodayPage({ monitor }: { monitor: MonitorController }) {
   return (
     <section className="today-layout">
       <div className="today-col-left">
+        <FocusConsole monitor={monitor} />
         <FocusActivity monitor={monitor} />
       </div>
       <div className="today-col-right">
-        <FocusConsole monitor={monitor} />
         <section className="stats-panel today-summary" aria-label="今日概览">
         <div className="summary-head">
           <h2>今日概览</h2>
@@ -458,7 +458,7 @@ function TodayPage({ monitor }: { monitor: MonitorController }) {
           </div>
           <div className="summary-col-tasks">
             <p className="summary-col-title">今日忙碌内容</p>
-            <TaskStatsList tasks={monitor.stats.taskStats.slice(0, 4)} emptyText="今天还没有忙碌记录" showBars />
+            <TaskStatsList tasks={monitor.stats.taskStats.slice(0, 6)} emptyText="今天还没有忙碌记录" showBars />
           </div>
         </div>
         </section>
