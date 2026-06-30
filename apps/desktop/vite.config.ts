@@ -6,12 +6,12 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: '127.0.0.1',
-    port: 5173,
+    port: 17633,
     strictPort: true,
   },
   preview: {
     host: '127.0.0.1',
-    port: 4173,
+    port: 17634,
     strictPort: true,
   },
 })
