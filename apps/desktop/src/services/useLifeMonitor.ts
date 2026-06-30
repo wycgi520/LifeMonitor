@@ -279,8 +279,8 @@ export function useLifeMonitor(): LifeMonitorController {
   }, [repository, settings]);
 
   const stats = useMemo(() => {
-    return calculateTodayStats(segments, selectedDayRange.startIso, selectedDayRange.endIso, nowIso);
-  }, [nowIso, segments, selectedDayRange.endIso, selectedDayRange.startIso]);
+    return calculateTodayStats(segments, selectedDayRange.startIso, selectedDayRange.endIso, nowIso, settings);
+  }, [nowIso, segments, selectedDayRange.endIso, selectedDayRange.startIso, settings]);
 
   const snapshotSegment = useMemo(() => {
     if (!activeSegment) return null;

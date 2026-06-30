@@ -52,6 +52,7 @@ import {
   normalizeTaskName,
   type CloseWindowBehavior,
   type LifeSettings,
+  type RhythmDeviationDirection,
   type TimelineSegment,
   type TrackableState,
 } from "@lifemonitor/core";
@@ -89,7 +90,7 @@ import {
   toLocalInputValue,
   toRulerPercent,
 } from "./lib/time";
-import { CompareBars, DayRuler, DonutChart, Metric, StateFeedback, TargetRing, TaskStatsList } from "./components/metrics";
+import { DayRuler, DonutChart, Metric, StateFeedback, TargetRing, TaskStatsList } from "./components/metrics";
 import { getTimeDistributionSegments } from "./components/metrics-data";
 import { isTauriRuntime } from "./services/repository";
 import { useLifeMonitor } from "./services/useLifeMonitor";
@@ -418,12 +419,45 @@ function DateControls({ monitor }: { monitor: MonitorController }) {
   );
 }
 
+function describeRhythm(direction: RhythmDeviationDirection, seconds: number) {
+  const minutes = Math.round(seconds / 60);
+  const span = minutes >= 1 ? `${minutes} 分钟` : "不到 1 分钟";
+
+  if (direction === "needs-rest") {
+    return {
+      tone: "warning" as const,
+      metricValue: "偏忙",
+      detail: `少休息 ${span}`,
+      feedbackTitle: "偏忙:该安排休息了",
+      feedbackBody: `为了回到目标忙休比例,还差约 ${span} 休息。`,
+    };
+  }
+
+  if (direction === "needs-busy") {
+    return {
+      tone: "warning" as const,
+      metricValue: "偏休息",
+      detail: `少忙碌 ${span}`,
+      feedbackTitle: "偏休息:可以投入忙碌了",
+      feedbackBody: `为了回到目标忙休比例,还差约 ${span} 忙碌。`,
+    };
+  }
+
+  return {
+    tone: undefined,
+    metricValue: "平衡",
+    detail: "忙休比例符合目标",
+    feedbackTitle: "节奏平衡",
+    feedbackBody: "忙碌和休息的比例符合目标,继续保持。",
+  };
+}
+
 function TodayPage({ monitor }: { monitor: MonitorController }) {
   const distribution = getTimeDistributionSegments(monitor.stats);
-  const overtimeSeconds = monitor.stats.overtimeBusySeconds + monitor.stats.overtimeRestSeconds;
-  const undertimeSeconds = monitor.stats.undertimeBusySeconds + monitor.stats.undertimeRestSeconds;
-
-  const hasOvertime = overtimeSeconds > 0;
+  const rhythm = describeRhythm(
+    monitor.stats.rhythmDeviationDirection,
+    monitor.stats.rhythmDeviationSeconds,
+  );
 
   return (
     <section className="today-layout">
@@ -441,20 +475,13 @@ function TodayPage({ monitor }: { monitor: MonitorController }) {
           <div className="summary-col-data">
             <div className="summary-strip">
               <Metric label="番茄钟" value={`${monitor.stats.pomodoroCount} 个`} />
-              <Metric label="超时" value={formatDuration(overtimeSeconds)} tone={hasOvertime ? "warning" : undefined} />
-              <Metric label="时间不足" value={formatDuration(undertimeSeconds)} />
+              <Metric label="节奏" value={rhythm.metricValue} tone={rhythm.tone} hint={rhythm.detail} />
               <Metric label="待补记忙碌" value={formatDuration(monitor.stats.unmarkedSeconds)} />
             </div>
             <DayRuler segments={distribution} />
-            {hasOvertime ? (
-              <StateFeedback tone="warning" title="今天有超出目标的记录">
-                累计超时 {formatDuration(overtimeSeconds)}，可以在时间线里拆分或补充备注。
-              </StateFeedback>
-            ) : (
-              <StateFeedback tone="success" title="节奏保持得不错">
-                目前没有明显超时，继续保持当前的忙碌与休息节奏。
-              </StateFeedback>
-            )}
+            <StateFeedback tone={rhythm.tone === "warning" ? "warning" : "success"} title={rhythm.feedbackTitle}>
+              {rhythm.feedbackBody}
+            </StateFeedback>
           </div>
           <div className="summary-col-tasks">
             <p className="summary-col-title">今日忙碌内容</p>
@@ -1131,8 +1158,10 @@ function BackfillPanel({ monitor }: { monitor: MonitorController }) {
 
 function StatsPage({ monitor, selectedDateLabel }: { monitor: MonitorController; selectedDateLabel: string }) {
   const distribution = getTimeDistributionSegments(monitor.stats);
-  const overtimeSeconds = monitor.stats.overtimeBusySeconds + monitor.stats.overtimeRestSeconds;
-  const undertimeSeconds = monitor.stats.undertimeBusySeconds + monitor.stats.undertimeRestSeconds;
+  const rhythm = describeRhythm(
+    monitor.stats.rhythmDeviationDirection,
+    monitor.stats.rhythmDeviationSeconds,
+  );
 
   return (
     <section className="stats-page">
@@ -1147,13 +1176,7 @@ function StatsPage({ monitor, selectedDateLabel }: { monitor: MonitorController;
             icon={<span className="metric-tomato" aria-hidden="true">🍅</span>}
             accent
           />
-          <CompareBars
-            title="超时 / 时间不足"
-            items={[
-              { key: "overtime", label: "超时", value: overtimeSeconds },
-              { key: "undertime", label: "时间不足", value: undertimeSeconds },
-            ]}
-          />
+          <Metric label="节奏偏离" value={rhythm.metricValue} tone={rhythm.tone} hint={rhythm.detail} />
           <Metric
             label="待补记忙碌"
             value={formatDuration(monitor.stats.unmarkedSeconds)}

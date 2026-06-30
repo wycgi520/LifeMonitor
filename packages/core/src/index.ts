@@ -74,6 +74,8 @@ export interface TaskStat {
   seconds: number;
 }
 
+export type RhythmDeviationDirection = "balanced" | "needs-rest" | "needs-busy";
+
 export interface TodayStats {
   busySeconds: number;
   restSeconds: number;
@@ -82,6 +84,8 @@ export interface TodayStats {
   overtimeRestSeconds: number;
   undertimeBusySeconds: number;
   undertimeRestSeconds: number;
+  rhythmDeviationDirection: RhythmDeviationDirection;
+  rhythmDeviationSeconds: number;
   pomodoroCount: number;
   taskStats: TaskStat[];
   unmarkedSeconds: number;
@@ -243,6 +247,7 @@ export function calculateTodayStats(
   dayStartIso: string,
   dayEndIso: string,
   nowIso = new Date().toISOString(),
+  settings = DEFAULT_SETTINGS,
 ): TodayStats {
   const taskSeconds = new Map<string, number>();
   let busySeconds = 0;
@@ -277,6 +282,8 @@ export function calculateTodayStats(
     }
   }
 
+  const rhythmDeviation = calculateRhythmDeviation(busySeconds, restSeconds, settings);
+
   return {
     busySeconds,
     restSeconds,
@@ -285,6 +292,8 @@ export function calculateTodayStats(
     overtimeRestSeconds,
     undertimeBusySeconds,
     undertimeRestSeconds,
+    rhythmDeviationDirection: rhythmDeviation.direction,
+    rhythmDeviationSeconds: rhythmDeviation.seconds,
     pomodoroCount: calculatePomodoroCount(segments, dayStartIso, dayEndIso),
     taskStats: [...taskSeconds.entries()]
       .map(([taskName, seconds]) => ({ taskName, seconds }))
@@ -648,6 +657,23 @@ function calculateUndertimeSeconds(segment: TimelineSegment, dayStartIso: string
   const clipped = clipRange(segment.endedAt, segment.plannedEndAt, dayStartIso, dayEndIso);
   if (!clipped) return 0;
   return secondsBetween(clipped.start, clipped.end);
+}
+
+function calculateRhythmDeviation(
+  busySeconds: number,
+  restSeconds: number,
+  settings: LifeSettings,
+): { direction: RhythmDeviationDirection; seconds: number } {
+  if (busySeconds === 0 && restSeconds === 0) return { direction: "balanced", seconds: 0 };
+
+  const targetBusyMinutes = Math.max(1, settings.busyMinutes);
+  const targetRestMinutes = Math.max(1, settings.restMinutes);
+  const missingRestSeconds = Math.max(0, Math.round((busySeconds * targetRestMinutes) / targetBusyMinutes) - restSeconds);
+  const missingBusySeconds = Math.max(0, Math.round((restSeconds * targetBusyMinutes) / targetRestMinutes) - busySeconds);
+
+  if (missingRestSeconds === 0 && missingBusySeconds === 0) return { direction: "balanced", seconds: 0 };
+  if (missingRestSeconds > missingBusySeconds) return { direction: "needs-rest", seconds: missingRestSeconds };
+  return { direction: "needs-busy", seconds: missingBusySeconds };
 }
 
 function calculateIdleSeconds(

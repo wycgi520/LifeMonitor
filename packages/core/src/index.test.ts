@@ -326,6 +326,111 @@ describe("today stats", () => {
     expect(stats.undertimeRestSeconds).toBe(720);
   });
 
+  it("reports missing rest when the day is busier than the target rhythm", () => {
+    const settings = { ...DEFAULT_SETTINGS, busyMinutes: 50, restMinutes: 10 };
+    const segments = [
+      {
+        ...createSegment({
+          state: "busy",
+          taskName: "写代码",
+          nowIso: "2026-05-21T01:00:00.000Z",
+          settings,
+        }),
+        endedAt: "2026-05-21T06:00:00.000Z",
+      },
+      {
+        ...createSegment({
+          state: "rest",
+          taskName: "喝水",
+          nowIso: "2026-05-21T06:00:00.000Z",
+          settings,
+        }),
+        endedAt: "2026-05-21T06:25:00.000Z",
+      },
+    ];
+
+    const stats = calculateTodayStats(
+      segments,
+      "2026-05-21T00:00:00.000Z",
+      "2026-05-22T00:00:00.000Z",
+      "2026-05-21T07:00:00.000Z",
+      settings,
+    );
+
+    expect(stats.rhythmDeviationDirection).toBe("needs-rest");
+    expect(stats.rhythmDeviationSeconds).toBe(2100);
+  });
+
+  it("reports missing busy time when the day is more rested than the target rhythm", () => {
+    const settings = { ...DEFAULT_SETTINGS, busyMinutes: 50, restMinutes: 10 };
+    const segments = [
+      {
+        ...createSegment({
+          state: "busy",
+          taskName: "写代码",
+          nowIso: "2026-05-21T01:00:00.000Z",
+          settings,
+        }),
+        endedAt: "2026-05-21T01:50:00.000Z",
+      },
+      {
+        ...createSegment({
+          state: "rest",
+          taskName: "喝水",
+          nowIso: "2026-05-21T01:50:00.000Z",
+          settings,
+        }),
+        endedAt: "2026-05-21T02:20:00.000Z",
+      },
+    ];
+
+    const stats = calculateTodayStats(
+      segments,
+      "2026-05-21T00:00:00.000Z",
+      "2026-05-22T00:00:00.000Z",
+      "2026-05-21T03:00:00.000Z",
+      settings,
+    );
+
+    expect(stats.rhythmDeviationDirection).toBe("needs-busy");
+    expect(stats.rhythmDeviationSeconds).toBe(6000);
+  });
+
+  it("reports a balanced rhythm when busy and rest match the target ratio", () => {
+    const settings = { ...DEFAULT_SETTINGS, busyMinutes: 50, restMinutes: 10 };
+    const segments = [
+      {
+        ...createSegment({
+          state: "busy",
+          taskName: "写代码",
+          nowIso: "2026-05-21T01:00:00.000Z",
+          settings,
+        }),
+        endedAt: "2026-05-21T02:40:00.000Z",
+      },
+      {
+        ...createSegment({
+          state: "rest",
+          taskName: "喝水",
+          nowIso: "2026-05-21T02:40:00.000Z",
+          settings,
+        }),
+        endedAt: "2026-05-21T03:00:00.000Z",
+      },
+    ];
+
+    const stats = calculateTodayStats(
+      segments,
+      "2026-05-21T00:00:00.000Z",
+      "2026-05-22T00:00:00.000Z",
+      "2026-05-21T04:00:00.000Z",
+      settings,
+    );
+
+    expect(stats.rhythmDeviationDirection).toBe("balanced");
+    expect(stats.rhythmDeviationSeconds).toBe(0);
+  });
+
   it("assigns pomodoro counts to the segment start day while clipping durations to the selected day", () => {
     const segment = {
       ...createSegment({
